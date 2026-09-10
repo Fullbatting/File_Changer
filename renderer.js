@@ -250,6 +250,7 @@ const sheetSelectA = document.getElementById('sheetSelectA');
 const sheetSelectB = document.getElementById('sheetSelectB');
 const analyzeStatus = document.getElementById('analyzeStatus');
 const mappingTableBody = document.getElementById('mappingTableBody');
+const presetSelect = document.getElementById('presetSelect');
 
 // 시트 선택 <select> 클릭이 드롭존의 파일선택 클릭으로 전파되지 않도록 차단
 [sheetRowA, sheetRowB].forEach((row) => {
@@ -295,7 +296,9 @@ function resetAnalysisState() {
   headersA = [];
   headersB = [];
   mapping = {};
+  currentPresetId = null;
   renderMappingTable();
+  if (presetSelect) presetSelect.value = '';
   analyzeStatus.textContent = '대기 중';
   analyzeStatus.className = 'pill warn';
 }
@@ -431,6 +434,31 @@ document.getElementById('btnSaveMapping').addEventListener('click', async () => 
   }
 });
 
+/**
+ * loadedMapping({ bColumn: aColumn }) 을 현재 매핑 테이블에 적용한다.
+ * 현재 원본(A) 파일에 없는 컬럼 값은 초기화하고 경고 로그를 남긴다.
+ * 매핑 규칙 파일 불러오기 / 프리셋 적용에서 공통으로 사용.
+ */
+function applyMappingToTable(loadedMapping) {
+  let appliedCount = 0;
+  let skippedCount = 0;
+  Object.keys(loadedMapping).forEach((bCol) => {
+    const select = mappingTableBody.querySelector(`select[data-bcolumn="${CSS.escape(bCol)}"]`);
+    if (select) {
+      const aCol = loadedMapping[bCol] || '';
+      const optionExists = !aCol || Array.from(select.options).some((o) => o.value === aCol);
+      select.value = optionExists ? aCol : '';
+      mapping[bCol] = select.value;
+      appliedCount += 1;
+      if (aCol && !optionExists) {
+        skippedCount += 1;
+        log(`"${bCol}" 컬럼의 매핑 값("${aCol}")이 현재 원본(A) 파일에 없어 초기화했습니다.`, 'warn');
+      }
+    }
+  });
+  return { appliedCount, skippedCount };
+}
+
 document.getElementById('btnLoadMapping').addEventListener('click', async () => {
   try {
     const paths = await ipcRenderer.invoke('dialog:openFile', { filters: JSON_FILTERS, multi: false });
@@ -449,28 +477,211 @@ document.getElementById('btnLoadMapping').addEventListener('click', async () => 
       throw new Error('먼저 타겟(B) 파일을 선택하고 [구조 분석]을 실행한 뒤 매핑 규칙을 불러오세요.');
     }
 
-    let appliedCount = 0;
-    let skippedCount = 0;
-    Object.keys(loadedMapping).forEach((bCol) => {
-      const select = mappingTableBody.querySelector(`select[data-bcolumn="${CSS.escape(bCol)}"]`);
-      if (select) {
-        const aCol = loadedMapping[bCol] || '';
-        const optionExists = !aCol || Array.from(select.options).some((o) => o.value === aCol);
-        select.value = optionExists ? aCol : '';
-        mapping[bCol] = select.value;
-        appliedCount += 1;
-        if (aCol && !optionExists) {
-          skippedCount += 1;
-          log(`"${bCol}" 컬럼의 매핑 값("${aCol}")이 현재 원본(A) 파일에 없어 초기화했습니다.`, 'warn');
-        }
-      }
-    });
-
+    const { appliedCount, skippedCount } = applyMappingToTable(loadedMapping);
+    currentPresetId = null;
+    if (presetSelect) presetSelect.value = '';
     log(`매핑 규칙을 불러왔습니다: ${paths[0]} (적용 ${appliedCount}건, 불일치 ${skippedCount}건)`, 'ok');
   } catch (err) {
     notifyError('매핑 규칙 불러오기 중 오류가 발생했습니다', err);
   }
 });
+
+/* -------------------------------------------------------------------------
+ * 매핑 프리셋 (이름 붙여 이 PC에 저장, 수정/삭제 가능)
+ * 파일로 내보내는 매핑 규칙(.json)과 달리, 앱 내부(사용자 데이터 폴더)에
+ * 이름과 함께 저장되어 다음 실행 시에도 드롭다운에서 바로 선택할 수 있다.
+ * ------------------------------------------------------------------------- */
+
+let presets = [];
+let currentPresetId = null;
+let userDataPath = null;
+const PRESETS_FILE_NAME = 'mapping-presets.json';
+
+function getPresetsFilePath() {
+  return path.join(userDataPath, PRESETS_FILE_NAME);
+}
+
+function generatePresetId() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function loadPresetsFromDisk() {
+  try {
+    if (!fs.existsSync(getPresetsFilePath())) {
+      presets = [];
+      return;
+    }
+    const raw = safeReadFileSync(getPresetsFilePath(), 'utf-8');
+    const parsed = JSON.parse(raw);
+    presets = Array.isArray(parsed) ? parsed : [];
+  } catch (err) {
+    presets = [];
+    log(`저장된 프리셋을 불러오는 중 오류가 발생하여 목록을 초기화합니다: ${friendlyErrorMessage(err)}`, 'warn');
+  }
+  renderPresetSelect();
+}
+
+function savePresetsToDisk() {
+  safeWriteFileSync(getPresetsFilePath(), JSON.stringify(presets, null, 2));
+}
+
+function renderPresetSelect() {
+  if (!presetSelect) return;
+  const sorted = [...presets].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  presetSelect.innerHTML = '<option value="">-- 새 프리셋 --</option>';
+  sorted.forEach((p) => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name;
+    presetSelect.appendChild(opt);
+  });
+  presetSelect.value = currentPresetId || '';
+}
+
+// 프리셋 이름 입력 모달
+const presetModal = document.getElementById('presetNameModal');
+const presetNameInput = document.getElementById('presetNameInput');
+const presetModalError = document.getElementById('presetModalError');
+const presetModalSaveBtn = document.getElementById('presetModalSave');
+const presetModalCancelBtn = document.getElementById('presetModalCancel');
+
+/** 프리셋 이름 입력 모달을 띄우고, 저장된 이름(취소 시 null)을 Promise로 반환 */
+function showPresetNameModal(defaultValue) {
+  return new Promise((resolve) => {
+    presetNameInput.value = defaultValue || '';
+    presetModalError.hidden = true;
+    presetModal.hidden = false;
+    presetNameInput.focus();
+    presetNameInput.select();
+
+    const cleanup = () => {
+      presetModal.hidden = true;
+      presetModalSaveBtn.onclick = null;
+      presetModalCancelBtn.onclick = null;
+      presetNameInput.onkeydown = null;
+      presetModal.onclick = null;
+    };
+
+    presetModalSaveBtn.onclick = () => {
+      const name = presetNameInput.value.trim();
+      if (!name) {
+        presetModalError.textContent = '프리셋 이름을 입력하세요.';
+        presetModalError.hidden = false;
+        return;
+      }
+      cleanup();
+      resolve(name);
+    };
+
+    presetModalCancelBtn.onclick = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    presetNameInput.onkeydown = (e) => {
+      if (e.key === 'Enter') presetModalSaveBtn.click();
+      if (e.key === 'Escape') presetModalCancelBtn.click();
+    };
+
+    // 배경(오버레이) 클릭 시 취소
+    presetModal.onclick = (e) => {
+      if (e.target === presetModal) presetModalCancelBtn.click();
+    };
+  });
+}
+
+if (presetSelect) {
+  presetSelect.addEventListener('change', (e) => {
+    const id = e.target.value;
+    if (!id) {
+      currentPresetId = null;
+      return;
+    }
+    const preset = presets.find((p) => p.id === id);
+    if (!preset) return;
+
+    if (headersB.length === 0) {
+      alert('먼저 원본(A)/타겟(B) 파일을 선택하고 [구조 분석]을 실행하세요.');
+      e.target.value = currentPresetId || '';
+      return;
+    }
+
+    const { appliedCount, skippedCount } = applyMappingToTable(preset.mapping);
+    currentPresetId = id;
+    log(`프리셋 "${preset.name}"을(를) 적용했습니다. (적용 ${appliedCount}건, 불일치 ${skippedCount}건)`, 'ok');
+  });
+}
+
+document.getElementById('btnSavePreset').addEventListener('click', async () => {
+  try {
+    if (headersB.length === 0) throw new Error('저장할 매핑이 없습니다. 먼저 구조 분석을 실행하세요.');
+
+    const current = presets.find((p) => p.id === currentPresetId);
+    const name = await showPresetNameModal(current ? current.name : '');
+    if (name === null) return; // 취소됨
+
+    const existing = presets.find((p) => p.name === name);
+    if (existing && existing.id !== currentPresetId) {
+      const overwrite = confirm(`이미 "${name}" 프리셋이 있습니다. 덮어쓸까요?`);
+      if (!overwrite) return;
+    }
+
+    const targetId = existing ? existing.id : currentPresetId || generatePresetId();
+    const now = new Date().toISOString();
+    const existingRecord = presets.find((p) => p.id === targetId);
+
+    const preset = {
+      id: targetId,
+      name,
+      sourceHeaders: headersA,
+      targetHeaders: headersB,
+      mapping: { ...mapping },
+      createdAt: existingRecord ? existingRecord.createdAt : now,
+      updatedAt: now,
+    };
+
+    const idx = presets.findIndex((p) => p.id === targetId);
+    if (idx >= 0) presets[idx] = preset;
+    else presets.push(preset);
+
+    savePresetsToDisk();
+    currentPresetId = targetId;
+    renderPresetSelect();
+    log(`프리셋 "${name}"(으)로 저장되었습니다.`, 'ok');
+  } catch (err) {
+    notifyError('프리셋 저장 중 오류가 발생했습니다', err);
+  }
+});
+
+document.getElementById('btnDeletePreset').addEventListener('click', () => {
+  try {
+    if (!currentPresetId) throw new Error('삭제할 프리셋을 선택하세요.');
+    const preset = presets.find((p) => p.id === currentPresetId);
+    if (!preset) throw new Error('선택된 프리셋을 찾을 수 없습니다.');
+
+    const ok = confirm(`"${preset.name}" 프리셋을 삭제할까요? 이 동작은 되돌릴 수 없습니다.`);
+    if (!ok) return;
+
+    presets = presets.filter((p) => p.id !== currentPresetId);
+    savePresetsToDisk();
+    currentPresetId = null;
+    renderPresetSelect();
+    log(`프리셋 "${preset.name}"이(가) 삭제되었습니다.`, 'ok');
+  } catch (err) {
+    notifyError('프리셋 삭제 중 오류가 발생했습니다', err);
+  }
+});
+
+// 앱 시작 시 사용자 데이터 폴더 경로를 받아와 저장된 프리셋 목록을 불러온다.
+ipcRenderer
+  .invoke('app:getUserDataPath')
+  .then((p) => {
+    userDataPath = p;
+    loadPresetsFromDisk();
+  })
+  .catch((err) => {
+    log(`프리셋 저장 위치를 확인하지 못했습니다: ${friendlyErrorMessage(err)}`, 'warn');
+  });
 
 document.getElementById('btnConvert').addEventListener('click', async () => {
   try {

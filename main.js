@@ -84,3 +84,9 @@ ipcMain.handle('dialog:saveFile', async (event, args = {}) => {
   if (result.canceled) return null;
   return result.filePath;
 });
+
+/**
+ * 앱 사용자 데이터 폴더 경로 반환 (매핑 프리셋 등 앱 내부 데이터 저장용)
+ * Windows: %APPDATA%/doc-convert-mailmerge, macOS: ~/Library/Application Support/doc-convert-mailmerge
+ */
+ipcMain.handle('app:getUserDataPath', () => app.getPath('userData'));

@@ -295,6 +295,89 @@ table.mapping-table select {
   padding: 14px 4px;
 }
 
+/* ---------- 프리셋 관리 ---------- */
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.preset-row label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.preset-row select {
+  flex: 1 1 200px;
+  min-width: 160px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  font-size: 13px;
+  background: #fff;
+}
+
+.card-divider {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 16px 0;
+}
+
+/* ---------- 모달 ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 18, 28, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.modal-card {
+  background: var(--color-panel);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.25);
+  padding: 22px;
+  width: 100%;
+  max-width: 380px;
+}
+
+.modal-card h3 {
+  margin: 0 0 14px 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.modal-card input[type="text"] {
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  font-size: 13.5px;
+  box-sizing: border-box;
+}
+
+.modal-card input[type="text"]:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.modal-error {
+  color: var(--color-danger);
+  font-size: 12px;
+  margin: 8px 0 0 0;
+}
+
+.modal-btn-row {
+  margin-top: 18px;
+  justify-content: flex-end;
+}
+
 /* ---------- Dynamic form (mail merge variables) ---------- */
 .var-form-grid {
   display: grid;
