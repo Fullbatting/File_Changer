@@ -1,0 +1,19 @@
+{
+  "name": "doc-convert-mailmerge",
+  "version": "1.0.0",
+  "description": "문서 변환 및 메일머지 자동화 프로그램 (Electron)",
+  "main": "main.js",
+  "author": "",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "docxtemplater": "^3.47.2",
+    "pizzip": "^3.1.6",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^30.0.1"
+  }
+}
