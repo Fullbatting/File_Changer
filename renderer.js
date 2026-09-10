@@ -167,6 +167,16 @@ const DOCX_FILTERS = [
   { name: 'All Files', extensions: ['*'] },
 ];
 
+const HWPX_FILTERS = [
+  { name: '한글(HWPX) 문서', extensions: ['hwpx'] },
+  { name: 'All Files', extensions: ['*'] },
+];
+
+const TEMPLATE_FILTERS = [
+  { name: 'Word / 한글(HWPX) 문서', extensions: ['docx', 'hwpx'] },
+  { name: 'All Files', extensions: ['*'] },
+];
+
 const JSON_FILTERS = [
   { name: 'JSON Files', extensions: ['json'] },
   { name: 'All Files', extensions: ['*'] },
@@ -536,10 +546,21 @@ const fileNameTemplate = document.getElementById('fileNameTemplate');
 const extractStatus = document.getElementById('extractStatus');
 const varFormGrid = document.getElementById('varFormGrid');
 
-bindDropzone(dropTemplate, fileNameTemplate, DOCX_FILTERS, (p) => {
+bindDropzone(dropTemplate, fileNameTemplate, TEMPLATE_FILTERS, (p) => {
   templatePath = p;
-  log(`Word 템플릿 선택됨: ${p}`);
+  log(`템플릿 선택됨: ${p}`);
 });
+
+/** 파일 확장자로 템플릿 형식을 판별. 지원하지 않는 형식은 안내 메시지와 함께 예외를 던짐 */
+function getTemplateFormat(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.docx') return 'docx';
+  if (ext === '.hwpx') return 'hwpx';
+  if (ext === '.hwp') {
+    throw new Error('구형 .hwp(바이너리) 포맷은 지원하지 않습니다. 한글 프로그램에서 "다른 이름으로 저장 > HWPX"로 변환한 뒤 다시 시도하세요.');
+  }
+  throw new Error('지원하지 않는 템플릿 형식입니다. .docx 또는 .hwpx 파일을 선택하세요.');
+}
 
 /** docx 파일 내부 word/document.xml 에서 {{변수명}} 패턴을 추출 */
 function extractTemplateVariables(filePath) {
@@ -565,6 +586,149 @@ function extractTemplateVariables(filePath) {
   }
 
   return Array.from(found);
+}
+
+/* -------------------------------------------------------------------------
+ * 한글(HWPX) 템플릿 처리
+ *
+ * .hwpx는 .docx와 마찬가지로 zip 컨테이너 + XML 구조를 사용한다. 본문은
+ * Contents/section0.xml, section1.xml, ... 에 문단(<hp:p>) > 런(<hp:run>) >
+ * 텍스트(<hp:t>) 계층으로 저장되며, 워드프로세서가 입력 도중 하나의 문구를
+ * 여러 <hp:t> 런으로 쪼개는 경우가 있어 .docx와 동일하게 "모든 런의 텍스트를
+ * 이어붙여 탐색 → 매치된 구간을 원래 런 위치에 되돌려 치환" 방식으로 처리한다.
+ * (docx에는 docxtemplater라는 성숙한 라이브러리가 있지만, HWPX를 지원하는
+ * 오픈소스 JS 라이브러리는 없어 동일한 원리를 직접 구현했다.)
+ * ------------------------------------------------------------------------- */
+
+/** XML 텍스트 노드에 안전하게 삽입할 수 있도록 특수문자를 이스케이프 */
+function xmlEscape(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/** hwpx zip에서 본문 섹션 XML 파일 이름 목록을 번호순으로 반환 */
+function getHwpxSectionNames(zip) {
+  return Object.keys(zip.files)
+    .filter((name) => /^Contents\/section\d+\.xml$/.test(name))
+    .sort((a, b) => {
+      const na = parseInt(a.match(/section(\d+)\.xml/)[1], 10);
+      const nb = parseInt(b.match(/section(\d+)\.xml/)[1], 10);
+      return na - nb;
+    });
+}
+
+/** section XML 하나에서 <hp:t> 런들의 원본 위치와, 이를 이어붙인 순수 텍스트를 함께 추출 */
+function parseHwpxRuns(xml) {
+  const runRegex = /<hp:t\b([^>]*)>([\s\S]*?)<\/hp:t>/g;
+  const runs = [];
+  let match;
+  let offset = 0;
+  while ((match = runRegex.exec(xml)) !== null) {
+    const content = match[2];
+    runs.push({
+      xmlStart: match.index,
+      xmlEnd: match.index + match[0].length,
+      openTag: `<hp:t${match[1]}>`,
+      content,
+      plainStart: offset,
+      plainEnd: offset + content.length,
+    });
+    offset += content.length;
+  }
+  return { runs, plainText: runs.map((r) => r.content).join('') };
+}
+
+/** section XML에서 {{변수명}} 목록을 추출 */
+function extractHwpxVariablesFromXml(xml) {
+  const { plainText } = parseHwpxRuns(xml);
+  const regex = /\{\{\s*([^{}]+?)\s*\}\}/g;
+  const found = [];
+  let match;
+  while ((match = regex.exec(plainText)) !== null) {
+    const varName = match[1].trim();
+    if (varName) found.push(varName);
+  }
+  return found;
+}
+
+/** section XML 안의 {{변수명}}을 data 값으로 치환한 새 XML 문자열을 반환 */
+function renderHwpxXml(xml, data) {
+  const { runs, plainText } = parseHwpxRuns(xml);
+  if (runs.length === 0) return xml;
+
+  const regex = /\{\{\s*([^{}]+?)\s*\}\}/g;
+  const runEdits = runs.map(() => []); // [{ localStart, localEnd, replacement }]
+  let match;
+
+  while ((match = regex.exec(plainText)) !== null) {
+    const varName = match[1].trim();
+    const matchStart = match.index;
+    const matchEnd = matchStart + match[0].length;
+    const value = xmlEscape(Object.prototype.hasOwnProperty.call(data, varName) ? data[varName] : '');
+
+    let firstTouchedRun = true;
+    runs.forEach((run, i) => {
+      const overlapStart = Math.max(matchStart, run.plainStart);
+      const overlapEnd = Math.min(matchEnd, run.plainEnd);
+      if (overlapStart < overlapEnd) {
+        // 치환 값은 매치가 처음 걸친 런에만 삽입하고, 나머지 겹치는 런에서는 해당 구간만 비운다.
+        runEdits[i].push({
+          localStart: overlapStart - run.plainStart,
+          localEnd: overlapEnd - run.plainStart,
+          replacement: firstTouchedRun ? value : '',
+        });
+        firstTouchedRun = false;
+      }
+    });
+  }
+
+  let result = '';
+  let cursor = 0;
+  runs.forEach((run, i) => {
+    result += xml.slice(cursor, run.xmlStart);
+    let content = run.content;
+    // 뒤쪽 구간부터 잘라내야 앞쪽 구간의 인덱스가 밀리지 않는다.
+    runEdits[i]
+      .sort((a, b) => b.localStart - a.localStart)
+      .forEach((e) => {
+        content = content.slice(0, e.localStart) + e.replacement + content.slice(e.localEnd);
+      });
+    result += run.openTag + content + '</hp:t>';
+    cursor = run.xmlEnd;
+  });
+  result += xml.slice(cursor);
+  return result;
+}
+
+/** .hwpx 템플릿에서 {{변수명}} 목록을 추출 */
+function extractHwpxVariables(filePath) {
+  const content = safeReadFileSync(filePath);
+  const zip = new PizZip(content);
+  const sections = getHwpxSectionNames(zip);
+  if (sections.length === 0) {
+    throw new Error('올바른 .hwpx 파일이 아닙니다. (Contents/section*.xml 없음)');
+  }
+  const found = new Set();
+  sections.forEach((name) => {
+    extractHwpxVariablesFromXml(zip.file(name).asText()).forEach((v) => found.add(v));
+  });
+  return Array.from(found);
+}
+
+/** .hwpx 템플릿의 {{변수명}}을 data 값으로 치환한 결과 파일 버퍼를 생성 */
+function renderHwpxDocument(filePath, data) {
+  const content = safeReadFileSync(filePath);
+  const zip = new PizZip(content);
+  const sections = getHwpxSectionNames(zip);
+  if (sections.length === 0) {
+    throw new Error('올바른 .hwpx 파일이 아닙니다. (Contents/section*.xml 없음)');
+  }
+  sections.forEach((name) => {
+    zip.file(name, renderHwpxXml(zip.file(name).asText(), data));
+  });
+  return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
 const varInputs = {}; // { varName: <input> }
@@ -600,10 +764,11 @@ function renderVarForm() {
 document.getElementById('btnExtractVars').addEventListener('click', () => {
   try {
     if (!templatePath) {
-      throw new Error('Word 템플릿(.docx) 파일을 먼저 선택하세요.');
+      throw new Error('Word/한글(.docx, .hwpx) 템플릿 파일을 먼저 선택하세요.');
     }
-    log('템플릿 변수 추출을 시작합니다...');
-    templateVars = extractTemplateVariables(templatePath);
+    const format = getTemplateFormat(templatePath);
+    log(`템플릿 변수 추출을 시작합니다... (형식: ${format.toUpperCase()})`);
+    templateVars = format === 'hwpx' ? extractHwpxVariables(templatePath) : extractTemplateVariables(templatePath);
 
     if (templateVars.length === 0) {
       extractStatus.textContent = '변수 없음';
@@ -626,11 +791,12 @@ document.getElementById('btnExtractVars').addEventListener('click', () => {
 document.getElementById('btnGenerateDocx').addEventListener('click', async () => {
   try {
     if (!templatePath) {
-      throw new Error('Word 템플릿(.docx) 파일을 먼저 선택하세요.');
+      throw new Error('Word/한글(.docx, .hwpx) 템플릿 파일을 먼저 선택하세요.');
     }
     if (templateVars.length === 0) {
       throw new Error('추출된 변수가 없습니다. 먼저 [변수 자동 추출]을 실행하세요.');
     }
+    const format = getTemplateFormat(templatePath);
 
     const data = {};
     const emptyVars = [];
@@ -643,32 +809,37 @@ document.getElementById('btnGenerateDocx').addEventListener('click', async () =>
       log(`값이 입력되지 않은 변수 ${emptyVars.length}개는 빈 문자열로 치환됩니다: ${emptyVars.join(', ')}`, 'warn');
     }
 
-    log('메일머지 문서 생성을 시작합니다...');
+    log(`메일머지 문서 생성을 시작합니다... (형식: ${format.toUpperCase()})`);
 
-    const content = safeReadFileSync(templatePath, 'binary');
-    const zip = new PizZip(content);
+    let outputBuffer;
+    if (format === 'hwpx') {
+      outputBuffer = renderHwpxDocument(templatePath, data);
+    } else {
+      const content = safeReadFileSync(templatePath, 'binary');
+      const zip = new PizZip(content);
 
-    const doc = new Docxtemplater(zip, {
-      paragraphLoop: true,
-      linebreaks: true,
-      delimiters: { start: '{{', end: '}}' },
-    });
+      const doc = new Docxtemplater(zip, {
+        paragraphLoop: true,
+        linebreaks: true,
+        delimiters: { start: '{{', end: '}}' },
+      });
 
-    try {
-      doc.render(data);
-    } catch (renderErr) {
-      const details = (renderErr.properties && renderErr.properties.errors) || [];
-      const detailMsg = details.map((e) => e.properties && e.properties.explanation).filter(Boolean).join('\n');
-      throw new Error(detailMsg || renderErr.message || '템플릿 렌더링 중 오류가 발생했습니다.');
+      try {
+        doc.render(data);
+      } catch (renderErr) {
+        const details = (renderErr.properties && renderErr.properties.errors) || [];
+        const detailMsg = details.map((e) => e.properties && e.properties.explanation).filter(Boolean).join('\n');
+        throw new Error(detailMsg || renderErr.message || '템플릿 렌더링 중 오류가 발생했습니다.');
+      }
+
+      outputBuffer = doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
     }
-
-    const outputBuffer = doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
 
     const baseName = path.basename(templatePath, path.extname(templatePath));
     const savePath = await ipcRenderer.invoke('dialog:saveFile', {
       title: '메일머지 결과 저장',
-      defaultPath: `${baseName}_결과.docx`,
-      filters: DOCX_FILTERS,
+      defaultPath: `${baseName}_결과.${format}`,
+      filters: format === 'hwpx' ? HWPX_FILTERS : DOCX_FILTERS,
     });
     if (!savePath) {
       log('저장이 취소되었습니다.', 'warn');
