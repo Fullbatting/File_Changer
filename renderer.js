@@ -157,8 +157,9 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
   });
 });
 
+// 스프레드시트 계열: xlsx와 매크로 포함 버전(xlsm)은 zip+XML 구조가 동일해 xlsx 파서로 함께 읽힘
 const EXCEL_FILTERS = [
-  { name: 'Excel / CSV Files', extensions: ['xlsx', 'xls', 'csv'] },
+  { name: 'Excel / CSV Files', extensions: ['xlsx', 'xls', 'xlsm', 'csv'] },
   { name: 'All Files', extensions: ['*'] },
 ];
 
@@ -172,8 +173,9 @@ const HWPX_FILTERS = [
   { name: 'All Files', extensions: ['*'] },
 ];
 
+// 문서 계열: 각 본문 포맷(docx/hwpx)과 그 서식파일 버전(dotx/hwpt)은 내부 구조가 동일해 같은 엔진으로 처리됨
 const TEMPLATE_FILTERS = [
-  { name: 'Word / 한글(HWPX) 문서', extensions: ['docx', 'hwpx'] },
+  { name: 'Word / 한글(HWPX) 문서', extensions: ['docx', 'dotx', 'hwpx', 'hwpt'] },
   { name: 'All Files', extensions: ['*'] },
 ];
 
@@ -554,12 +556,13 @@ bindDropzone(dropTemplate, fileNameTemplate, TEMPLATE_FILTERS, (p) => {
 /** 파일 확장자로 템플릿 형식을 판별. 지원하지 않는 형식은 안내 메시지와 함께 예외를 던짐 */
 function getTemplateFormat(filePath) {
   const ext = path.extname(filePath).toLowerCase();
-  if (ext === '.docx') return 'docx';
-  if (ext === '.hwpx') return 'hwpx';
+  // .dotx(Word 서식 파일)는 .docx와, .hwpt(한글 서식 파일)는 .hwpx와 내부 구조가 동일하여 같은 엔진으로 처리
+  if (ext === '.docx' || ext === '.dotx') return 'docx';
+  if (ext === '.hwpx' || ext === '.hwpt') return 'hwpx';
   if (ext === '.hwp') {
     throw new Error('구형 .hwp(바이너리) 포맷은 지원하지 않습니다. 한글 프로그램에서 "다른 이름으로 저장 > HWPX"로 변환한 뒤 다시 시도하세요.');
   }
-  throw new Error('지원하지 않는 템플릿 형식입니다. .docx 또는 .hwpx 파일을 선택하세요.');
+  throw new Error('지원하지 않는 템플릿 형식입니다. .docx, .dotx, .hwpx 또는 .hwpt 파일을 선택하세요.');
 }
 
 /** docx 파일 내부 word/document.xml 에서 {{변수명}} 패턴을 추출 */

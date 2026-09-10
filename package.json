@@ -10,11 +10,9 @@
   },
   "dependencies": {
     "docxtemplater": "^3.47.2",
+    "electron": "^30.0.1",
     "iconv-lite": "^0.6.3",
     "pizzip": "^3.1.6",
     "xlsx": "^0.18.5"
-  },
-  "devDependencies": {
-    "electron": "^30.0.1"
   }
 }

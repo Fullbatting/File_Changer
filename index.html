@@ -23,7 +23,7 @@
 
       <div class="card">
         <h2><span class="step-badge">1</span>원본(A) / 타겟 양식(B) 파일 선택</h2>
-        <p class="desc">엑셀(.xlsx, .xls) 또는 CSV(.csv) 파일을 드래그 앤 드롭하거나 클릭하여 선택하세요.</p>
+        <p class="desc">엑셀(.xlsx, .xls, .xlsm) 또는 CSV(.csv) 파일을 드래그 앤 드롭하거나 클릭하여 선택하세요.</p>
 
         <div class="dropzone-grid">
           <div id="dropA" class="dropzone" data-target="A">
@@ -91,10 +91,10 @@
 
       <div class="card">
         <h2><span class="step-badge">1</span>Word / 한글(HWPX) 템플릿 파일 선택</h2>
-        <p class="desc">{{변수명}} 형식의 플레이스홀더가 포함된 .docx 또는 .hwpx 템플릿 파일을 선택하세요. (구형 .hwp 바이너리 포맷은 지원하지 않습니다 — 한글에서 "다른 이름으로 저장 > HWPX"로 변환 후 이용하세요.)</p>
+        <p class="desc">{{변수명}} 형식의 플레이스홀더가 포함된 .docx, .dotx, .hwpx 또는 .hwpt 템플릿 파일을 선택하세요. (구형 .hwp 바이너리 포맷은 지원하지 않습니다 — 한글에서 "다른 이름으로 저장 > HWPX"로 변환 후 이용하세요.)</p>
 
         <div id="dropTemplate" class="dropzone">
-          <div class="dz-title">📝 Word / 한글 템플릿 (.docx, .hwpx)</div>
+          <div class="dz-title">📝 Word / 한글 템플릿 (.docx, .dotx, .hwpx, .hwpt)</div>
           <div class="dz-hint">클릭 또는 파일을 여기로 드래그하세요</div>
           <div id="fileNameTemplate" class="dz-file"></div>
         </div>
