@@ -180,6 +180,30 @@ main.content {
   word-break: break-all;
 }
 
+.sheet-row {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: default;
+}
+
+.sheet-row label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.sheet-row select {
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  font-size: 12.5px;
+  background: #fff;
+  cursor: pointer;
+}
+
 /* ---------- Buttons ---------- */
 .btn {
   padding: 9px 16px;

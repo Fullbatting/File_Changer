@@ -7,6 +7,7 @@ const path = require('path');
 const XLSX = require('xlsx');
 const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
+const iconv = require('iconv-lite');
 
 /* =========================================================================
    0. 공통 유틸 (로그, 탭 전환)
@@ -22,9 +23,124 @@ function log(message, level = 'info') {
 }
 
 function notifyError(context, err) {
-  const msg = err && err.message ? err.message : String(err);
+  const msg = friendlyErrorMessage(err);
   log(`${context}: ${msg}`, 'error');
   alert(`❌ ${context}\n\n${msg}`);
+}
+
+/** Node.js 파일 시스템 에러 코드를 이해하기 쉬운 한국어 메시지로 변환 */
+function friendlyErrorMessage(err) {
+  if (!err) return '알 수 없는 오류입니다.';
+  const code = err.code;
+  const target = err.path ? ` (${err.path})` : '';
+  switch (code) {
+    case 'ENOENT':
+      return `파일을 찾을 수 없습니다${target}. 파일이 이동되었거나 삭제되지 않았는지 확인하세요.`;
+    case 'EACCES':
+    case 'EPERM':
+      return `파일에 접근할 권한이 없습니다${target}. 관리자 권한 또는 파일 권한을 확인하세요.`;
+    case 'EBUSY':
+      return `파일이 다른 프로그램(Excel/Word 등)에서 열려 있어 사용할 수 없습니다${target}. 해당 프로그램에서 파일을 닫은 뒤 다시 시도하세요.`;
+    case 'EISDIR':
+      return '선택한 경로는 폴더입니다. 파일을 선택하세요.';
+    case 'ENOSPC':
+      return '디스크 여유 공간이 부족합니다.';
+    default:
+      return err.message ? String(err.message) : String(err);
+  }
+}
+
+/** 파일을 안전하게 읽고, 실패 시 친절한 에러 메시지로 재발생시킴 */
+function safeReadFileSync(filePath, encoding) {
+  if (!fs.existsSync(filePath)) {
+    const err = new Error(`파일을 찾을 수 없습니다 (${filePath})`);
+    err.code = 'ENOENT';
+    err.path = filePath;
+    throw err;
+  }
+  try {
+    return encoding ? fs.readFileSync(filePath, encoding) : fs.readFileSync(filePath);
+  } catch (err) {
+    err.path = err.path || filePath;
+    throw err;
+  }
+}
+
+/** 파일을 안전하게 저장하고, 실패 시 친절한 에러 메시지로 재발생시킴 */
+function safeWriteFileSync(filePath, data) {
+  try {
+    fs.writeFileSync(filePath, data);
+  } catch (err) {
+    err.path = err.path || filePath;
+    throw err;
+  }
+}
+
+/**
+ * 버퍼가 유효한 UTF-8 시퀀스로만 구성되어 있는지 검사한다.
+ * (한글 CSV가 EUC-KR/CP949(Windows 기본 인코딩)로 저장된 경우를 구분하기 위함)
+ */
+function isValidUTF8(buffer) {
+  let i = 0;
+  const len = buffer.length;
+  while (i < len) {
+    const byte = buffer[i];
+    let extraBytes = 0;
+
+    if (byte <= 0x7f) {
+      extraBytes = 0;
+    } else if ((byte & 0xe0) === 0xc0) {
+      extraBytes = 1;
+    } else if ((byte & 0xf0) === 0xe0) {
+      extraBytes = 2;
+    } else if ((byte & 0xf8) === 0xf0) {
+      extraBytes = 3;
+    } else {
+      return false;
+    }
+
+    if (i + extraBytes >= len) return false;
+
+    for (let j = 1; j <= extraBytes; j++) {
+      if ((buffer[i + j] & 0xc0) !== 0x80) return false;
+    }
+
+    i += extraBytes + 1;
+  }
+  return true;
+}
+
+/**
+ * CSV 파일을 인코딩을 자동 판별하여 문자열로 디코딩한다.
+ * - UTF-8 BOM: BOM 제거 후 UTF-8로 디코딩
+ * - 유효한 UTF-8: 그대로 UTF-8로 디코딩
+ * - 그 외(대부분 Windows 한글 Excel의 기본 저장 인코딩): CP949(EUC-KR 상위 호환)로 디코딩
+ */
+function decodeCsvBuffer(buffer) {
+  const hasBOM = buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf;
+  if (hasBOM) {
+    return buffer.slice(3).toString('utf-8');
+  }
+  if (isValidUTF8(buffer)) {
+    return buffer.toString('utf-8');
+  }
+  return iconv.decode(buffer, 'cp949');
+}
+
+/**
+ * 파일 경로로부터 워크북을 읽는다.
+ * - .csv: 인코딩 자동 판별 후 문자열로 파싱 (한글 CP949 CSV 대응)
+ * - .xlsx/.xls: XLSX.readFile 사용
+ */
+function readWorkbookSmart(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.csv') {
+    const buffer = safeReadFileSync(filePath);
+    const text = decodeCsvBuffer(buffer);
+    return XLSX.read(text, { type: 'string', raw: false });
+  }
+  const buffer = safeReadFileSync(filePath);
+  return XLSX.read(buffer, { type: 'buffer', cellDates: true });
 }
 
 document.getElementById('btnClearLog').addEventListener('click', () => {
@@ -48,6 +164,16 @@ const EXCEL_FILTERS = [
 
 const DOCX_FILTERS = [
   { name: 'Word Document', extensions: ['docx'] },
+  { name: 'All Files', extensions: ['*'] },
+];
+
+const HWPX_FILTERS = [
+  { name: '한글(HWPX) 문서', extensions: ['hwpx'] },
+  { name: 'All Files', extensions: ['*'] },
+];
+
+const TEMPLATE_FILTERS = [
+  { name: 'Word / 한글(HWPX) 문서', extensions: ['docx', 'hwpx'] },
   { name: 'All Files', extensions: ['*'] },
 ];
 
@@ -106,6 +232,8 @@ function bindDropzone(zoneEl, fileNameEl, filters, onFileSelected) {
 
 let fileAPath = null;
 let fileBPath = null;
+let sheetAName = null;
+let sheetBName = null;
 let headersA = [];
 let headersB = [];
 let mapping = {}; // { bColumn: aColumn|null }
@@ -114,29 +242,92 @@ const dropA = document.getElementById('dropA');
 const dropB = document.getElementById('dropB');
 const fileNameA = document.getElementById('fileNameA');
 const fileNameB = document.getElementById('fileNameB');
+const sheetRowA = document.getElementById('sheetRowA');
+const sheetRowB = document.getElementById('sheetRowB');
+const sheetSelectA = document.getElementById('sheetSelectA');
+const sheetSelectB = document.getElementById('sheetSelectB');
 const analyzeStatus = document.getElementById('analyzeStatus');
 const mappingTableBody = document.getElementById('mappingTableBody');
+
+// 시트 선택 <select> 클릭이 드롭존의 파일선택 클릭으로 전파되지 않도록 차단
+[sheetRowA, sheetRowB].forEach((row) => {
+  row.addEventListener('click', (e) => e.stopPropagation());
+});
+
+/** 파일이 선택되면 시트 목록을 읽어 시트 선택 드롭다운을 갱신한다 */
+function refreshSheetSelector(filePath, sheetRowEl, sheetSelectEl, onChange) {
+  try {
+    const workbook = readWorkbookSmart(filePath);
+    const sheetNames = workbook.SheetNames || [];
+    sheetSelectEl.innerHTML = '';
+    sheetNames.forEach((name) => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      sheetSelectEl.appendChild(opt);
+    });
+
+    if (sheetNames.length > 1) {
+      sheetRowEl.hidden = false;
+      log(`시트 ${sheetNames.length}개 발견: ${sheetNames.join(', ')}`);
+    } else {
+      sheetRowEl.hidden = true;
+    }
+
+    const selected = sheetNames[0] || null;
+    onChange(selected);
+
+    sheetSelectEl.onchange = () => {
+      onChange(sheetSelectEl.value);
+      resetAnalysisState();
+      log(`시트가 "${sheetSelectEl.value}"(으)로 변경되었습니다. [구조 분석]을 다시 실행하세요.`, 'warn');
+    };
+  } catch (err) {
+    sheetRowEl.hidden = true;
+    notifyError('시트 목록을 읽는 중 오류가 발생했습니다', err);
+  }
+}
+
+/** 파일이 (재)선택되면 이전 분석 결과가 새 파일과 어긋나지 않도록 매핑 상태를 초기화 */
+function resetAnalysisState() {
+  headersA = [];
+  headersB = [];
+  mapping = {};
+  renderMappingTable();
+  analyzeStatus.textContent = '대기 중';
+  analyzeStatus.className = 'pill warn';
+}
 
 bindDropzone(dropA, fileNameA, EXCEL_FILTERS, (p) => {
   fileAPath = p;
   log(`원본(A) 파일 선택됨: ${p}`);
+  resetAnalysisState();
+  refreshSheetSelector(p, sheetRowA, sheetSelectA, (name) => {
+    sheetAName = name;
+  });
 });
 
 bindDropzone(dropB, fileNameB, EXCEL_FILTERS, (p) => {
   fileBPath = p;
   log(`타겟(B) 파일 선택됨: ${p}`);
+  resetAnalysisState();
+  refreshSheetSelector(p, sheetRowB, sheetSelectB, (name) => {
+    sheetBName = name;
+  });
 });
 
-/** 엑셀/CSV 파일의 첫 번째 행(헤더)을 배열로 추출 */
-function extractHeaders(filePath) {
-  const workbook = XLSX.readFile(filePath, { cellDates: true });
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) throw new Error('시트를 찾을 수 없습니다.');
-  const sheet = workbook.Sheets[sheetName];
+/** 엑셀/CSV 파일의 지정된 시트에서 첫 번째 행(헤더)을 배열로 추출 */
+function extractHeaders(filePath, sheetName) {
+  const workbook = readWorkbookSmart(filePath);
+  const targetSheetName = sheetName || workbook.SheetNames[0];
+  if (!targetSheetName || !workbook.Sheets[targetSheetName]) {
+    throw new Error(`시트를 찾을 수 없습니다${sheetName ? ` (${sheetName})` : ''}.`);
+  }
+  const sheet = workbook.Sheets[targetSheetName];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false });
-  if (!rows || rows.length === 0) throw new Error('데이터가 비어 있습니다.');
+  if (!rows || rows.length === 0) throw new Error(`"${targetSheetName}" 시트에 데이터가 비어 있습니다.`);
   const headerRow = rows[0].map((h) => String(h).trim()).filter((h) => h !== '');
-  if (headerRow.length === 0) throw new Error('헤더(컬럼명) 행을 찾을 수 없습니다.');
+  if (headerRow.length === 0) throw new Error(`"${targetSheetName}" 시트에서 헤더(컬럼명) 행을 찾을 수 없습니다.`);
   return headerRow;
 }
 
@@ -197,9 +388,9 @@ document.getElementById('btnAnalyze').addEventListener('click', () => {
     if (!fileAPath || !fileBPath) {
       throw new Error('원본(A) 파일과 타겟 양식(B) 파일을 모두 선택하세요.');
     }
-    log('구조 분석을 시작합니다...');
-    headersA = extractHeaders(fileAPath);
-    headersB = extractHeaders(fileBPath);
+    log(`구조 분석을 시작합니다... (A 시트: ${sheetAName || '첫 번째 시트'}, B 시트: ${sheetBName || '첫 번째 시트'})`);
+    headersA = extractHeaders(fileAPath, sheetAName);
+    headersB = extractHeaders(fileBPath, sheetBName);
     log(`원본(A) 컬럼 ${headersA.length}개, 타겟(B) 컬럼 ${headersB.length}개 발견`, 'ok');
 
     renderMappingTable();
@@ -227,9 +418,11 @@ document.getElementById('btnSaveMapping').addEventListener('click', async () => 
     const payload = {
       sourceHeaders: headersA,
       targetHeaders: headersB,
+      sourceSheet: sheetAName,
+      targetSheet: sheetBName,
       mapping,
     };
-    fs.writeFileSync(savePath, JSON.stringify(payload, null, 2), 'utf-8');
+    safeWriteFileSync(savePath, JSON.stringify(payload, null, 2));
     log(`매핑 규칙이 저장되었습니다: ${savePath}`, 'ok');
   } catch (err) {
     notifyError('매핑 규칙 저장 중 오류가 발생했습니다', err);
@@ -241,23 +434,37 @@ document.getElementById('btnLoadMapping').addEventListener('click', async () => 
     const paths = await ipcRenderer.invoke('dialog:openFile', { filters: JSON_FILTERS, multi: false });
     if (!paths || paths.length === 0) return;
 
-    const raw = fs.readFileSync(paths[0], 'utf-8');
-    const payload = JSON.parse(raw);
+    const raw = safeReadFileSync(paths[0], 'utf-8');
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch (parseErr) {
+      throw new Error('올바른 JSON 형식의 매핑 규칙 파일이 아닙니다.');
+    }
     const loadedMapping = payload.mapping || payload; // 단순 {b: a} 형식도 허용
 
     if (headersB.length === 0) {
       throw new Error('먼저 타겟(B) 파일을 선택하고 [구조 분석]을 실행한 뒤 매핑 규칙을 불러오세요.');
     }
 
+    let appliedCount = 0;
+    let skippedCount = 0;
     Object.keys(loadedMapping).forEach((bCol) => {
       const select = mappingTableBody.querySelector(`select[data-bcolumn="${CSS.escape(bCol)}"]`);
       if (select) {
-        select.value = loadedMapping[bCol] || '';
+        const aCol = loadedMapping[bCol] || '';
+        const optionExists = !aCol || Array.from(select.options).some((o) => o.value === aCol);
+        select.value = optionExists ? aCol : '';
         mapping[bCol] = select.value;
+        appliedCount += 1;
+        if (aCol && !optionExists) {
+          skippedCount += 1;
+          log(`"${bCol}" 컬럼의 매핑 값("${aCol}")이 현재 원본(A) 파일에 없어 초기화했습니다.`, 'warn');
+        }
       }
     });
 
-    log(`매핑 규칙을 불러왔습니다: ${paths[0]}`, 'ok');
+    log(`매핑 규칙을 불러왔습니다: ${paths[0]} (적용 ${appliedCount}건, 불일치 ${skippedCount}건)`, 'ok');
   } catch (err) {
     notifyError('매핑 규칙 불러오기 중 오류가 발생했습니다', err);
   }
@@ -272,16 +479,26 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
       throw new Error('타겟(B) 파일 분석이 필요합니다.');
     }
 
-    const mappedCount = headersB.filter((b) => mapping[b]).length;
+    const unmappedColumns = headersB.filter((b) => !mapping[b]);
+    const mappedCount = headersB.length - unmappedColumns.length;
     if (mappedCount === 0) {
       throw new Error('매핑된 컬럼이 하나도 없습니다. 매핑 테이블을 확인하세요.');
     }
+    if (unmappedColumns.length > 0) {
+      log(`매핑되지 않은 컬럼 ${unmappedColumns.length}개는 빈 값으로 채워집니다: ${unmappedColumns.join(', ')}`, 'warn');
+    }
 
-    log('데이터 변환을 시작합니다...');
+    log(`데이터 변환을 시작합니다... (A 시트: ${sheetAName || '첫 번째 시트'})`);
 
-    const workbook = XLSX.readFile(fileAPath, { cellDates: true });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const workbook = readWorkbookSmart(fileAPath);
+    const targetSheetName = sheetAName || workbook.SheetNames[0];
+    const sheet = workbook.Sheets[targetSheetName];
+    if (!sheet) throw new Error(`원본(A) 파일에서 "${targetSheetName}" 시트를 찾을 수 없습니다.`);
     const sourceRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+    if (sourceRows.length === 0) {
+      throw new Error('원본(A) 파일에 변환할 데이터 행이 없습니다.');
+    }
 
     const convertedRows = sourceRows.map((row) => {
       const newRow = {};
@@ -307,7 +524,8 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
     const newSheet = XLSX.utils.json_to_sheet(convertedRows, { header: headersB });
     const newWorkbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(newWorkbook, newSheet, 'Converted');
-    XLSX.writeFile(newWorkbook, savePath);
+    const outputBuffer = XLSX.write(newWorkbook, { bookType: 'xlsx', type: 'buffer' });
+    safeWriteFileSync(savePath, outputBuffer);
 
     log(`변환된 파일이 저장되었습니다: ${savePath}`, 'ok');
     alert('✅ 변환이 완료되었습니다.');
@@ -328,14 +546,25 @@ const fileNameTemplate = document.getElementById('fileNameTemplate');
 const extractStatus = document.getElementById('extractStatus');
 const varFormGrid = document.getElementById('varFormGrid');
 
-bindDropzone(dropTemplate, fileNameTemplate, DOCX_FILTERS, (p) => {
+bindDropzone(dropTemplate, fileNameTemplate, TEMPLATE_FILTERS, (p) => {
   templatePath = p;
-  log(`Word 템플릿 선택됨: ${p}`);
+  log(`템플릿 선택됨: ${p}`);
 });
+
+/** 파일 확장자로 템플릿 형식을 판별. 지원하지 않는 형식은 안내 메시지와 함께 예외를 던짐 */
+function getTemplateFormat(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.docx') return 'docx';
+  if (ext === '.hwpx') return 'hwpx';
+  if (ext === '.hwp') {
+    throw new Error('구형 .hwp(바이너리) 포맷은 지원하지 않습니다. 한글 프로그램에서 "다른 이름으로 저장 > HWPX"로 변환한 뒤 다시 시도하세요.');
+  }
+  throw new Error('지원하지 않는 템플릿 형식입니다. .docx 또는 .hwpx 파일을 선택하세요.');
+}
 
 /** docx 파일 내부 word/document.xml 에서 {{변수명}} 패턴을 추출 */
 function extractTemplateVariables(filePath) {
-  const content = fs.readFileSync(filePath, 'binary');
+  const content = safeReadFileSync(filePath, 'binary');
   const zip = new PizZip(content);
 
   const docXmlFile = zip.file('word/document.xml');
@@ -357,6 +586,149 @@ function extractTemplateVariables(filePath) {
   }
 
   return Array.from(found);
+}
+
+/* -------------------------------------------------------------------------
+ * 한글(HWPX) 템플릿 처리
+ *
+ * .hwpx는 .docx와 마찬가지로 zip 컨테이너 + XML 구조를 사용한다. 본문은
+ * Contents/section0.xml, section1.xml, ... 에 문단(<hp:p>) > 런(<hp:run>) >
+ * 텍스트(<hp:t>) 계층으로 저장되며, 워드프로세서가 입력 도중 하나의 문구를
+ * 여러 <hp:t> 런으로 쪼개는 경우가 있어 .docx와 동일하게 "모든 런의 텍스트를
+ * 이어붙여 탐색 → 매치된 구간을 원래 런 위치에 되돌려 치환" 방식으로 처리한다.
+ * (docx에는 docxtemplater라는 성숙한 라이브러리가 있지만, HWPX를 지원하는
+ * 오픈소스 JS 라이브러리는 없어 동일한 원리를 직접 구현했다.)
+ * ------------------------------------------------------------------------- */
+
+/** XML 텍스트 노드에 안전하게 삽입할 수 있도록 특수문자를 이스케이프 */
+function xmlEscape(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/** hwpx zip에서 본문 섹션 XML 파일 이름 목록을 번호순으로 반환 */
+function getHwpxSectionNames(zip) {
+  return Object.keys(zip.files)
+    .filter((name) => /^Contents\/section\d+\.xml$/.test(name))
+    .sort((a, b) => {
+      const na = parseInt(a.match(/section(\d+)\.xml/)[1], 10);
+      const nb = parseInt(b.match(/section(\d+)\.xml/)[1], 10);
+      return na - nb;
+    });
+}
+
+/** section XML 하나에서 <hp:t> 런들의 원본 위치와, 이를 이어붙인 순수 텍스트를 함께 추출 */
+function parseHwpxRuns(xml) {
+  const runRegex = /<hp:t\b([^>]*)>([\s\S]*?)<\/hp:t>/g;
+  const runs = [];
+  let match;
+  let offset = 0;
+  while ((match = runRegex.exec(xml)) !== null) {
+    const content = match[2];
+    runs.push({
+      xmlStart: match.index,
+      xmlEnd: match.index + match[0].length,
+      openTag: `<hp:t${match[1]}>`,
+      content,
+      plainStart: offset,
+      plainEnd: offset + content.length,
+    });
+    offset += content.length;
+  }
+  return { runs, plainText: runs.map((r) => r.content).join('') };
+}
+
+/** section XML에서 {{변수명}} 목록을 추출 */
+function extractHwpxVariablesFromXml(xml) {
+  const { plainText } = parseHwpxRuns(xml);
+  const regex = /\{\{\s*([^{}]+?)\s*\}\}/g;
+  const found = [];
+  let match;
+  while ((match = regex.exec(plainText)) !== null) {
+    const varName = match[1].trim();
+    if (varName) found.push(varName);
+  }
+  return found;
+}
+
+/** section XML 안의 {{변수명}}을 data 값으로 치환한 새 XML 문자열을 반환 */
+function renderHwpxXml(xml, data) {
+  const { runs, plainText } = parseHwpxRuns(xml);
+  if (runs.length === 0) return xml;
+
+  const regex = /\{\{\s*([^{}]+?)\s*\}\}/g;
+  const runEdits = runs.map(() => []); // [{ localStart, localEnd, replacement }]
+  let match;
+
+  while ((match = regex.exec(plainText)) !== null) {
+    const varName = match[1].trim();
+    const matchStart = match.index;
+    const matchEnd = matchStart + match[0].length;
+    const value = xmlEscape(Object.prototype.hasOwnProperty.call(data, varName) ? data[varName] : '');
+
+    let firstTouchedRun = true;
+    runs.forEach((run, i) => {
+      const overlapStart = Math.max(matchStart, run.plainStart);
+      const overlapEnd = Math.min(matchEnd, run.plainEnd);
+      if (overlapStart < overlapEnd) {
+        // 치환 값은 매치가 처음 걸친 런에만 삽입하고, 나머지 겹치는 런에서는 해당 구간만 비운다.
+        runEdits[i].push({
+          localStart: overlapStart - run.plainStart,
+          localEnd: overlapEnd - run.plainStart,
+          replacement: firstTouchedRun ? value : '',
+        });
+        firstTouchedRun = false;
+      }
+    });
+  }
+
+  let result = '';
+  let cursor = 0;
+  runs.forEach((run, i) => {
+    result += xml.slice(cursor, run.xmlStart);
+    let content = run.content;
+    // 뒤쪽 구간부터 잘라내야 앞쪽 구간의 인덱스가 밀리지 않는다.
+    runEdits[i]
+      .sort((a, b) => b.localStart - a.localStart)
+      .forEach((e) => {
+        content = content.slice(0, e.localStart) + e.replacement + content.slice(e.localEnd);
+      });
+    result += run.openTag + content + '</hp:t>';
+    cursor = run.xmlEnd;
+  });
+  result += xml.slice(cursor);
+  return result;
+}
+
+/** .hwpx 템플릿에서 {{변수명}} 목록을 추출 */
+function extractHwpxVariables(filePath) {
+  const content = safeReadFileSync(filePath);
+  const zip = new PizZip(content);
+  const sections = getHwpxSectionNames(zip);
+  if (sections.length === 0) {
+    throw new Error('올바른 .hwpx 파일이 아닙니다. (Contents/section*.xml 없음)');
+  }
+  const found = new Set();
+  sections.forEach((name) => {
+    extractHwpxVariablesFromXml(zip.file(name).asText()).forEach((v) => found.add(v));
+  });
+  return Array.from(found);
+}
+
+/** .hwpx 템플릿의 {{변수명}}을 data 값으로 치환한 결과 파일 버퍼를 생성 */
+function renderHwpxDocument(filePath, data) {
+  const content = safeReadFileSync(filePath);
+  const zip = new PizZip(content);
+  const sections = getHwpxSectionNames(zip);
+  if (sections.length === 0) {
+    throw new Error('올바른 .hwpx 파일이 아닙니다. (Contents/section*.xml 없음)');
+  }
+  sections.forEach((name) => {
+    zip.file(name, renderHwpxXml(zip.file(name).asText(), data));
+  });
+  return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
 const varInputs = {}; // { varName: <input> }
@@ -392,10 +764,11 @@ function renderVarForm() {
 document.getElementById('btnExtractVars').addEventListener('click', () => {
   try {
     if (!templatePath) {
-      throw new Error('Word 템플릿(.docx) 파일을 먼저 선택하세요.');
+      throw new Error('Word/한글(.docx, .hwpx) 템플릿 파일을 먼저 선택하세요.');
     }
-    log('템플릿 변수 추출을 시작합니다...');
-    templateVars = extractTemplateVariables(templatePath);
+    const format = getTemplateFormat(templatePath);
+    log(`템플릿 변수 추출을 시작합니다... (형식: ${format.toUpperCase()})`);
+    templateVars = format === 'hwpx' ? extractHwpxVariables(templatePath) : extractTemplateVariables(templatePath);
 
     if (templateVars.length === 0) {
       extractStatus.textContent = '변수 없음';
@@ -418,51 +791,62 @@ document.getElementById('btnExtractVars').addEventListener('click', () => {
 document.getElementById('btnGenerateDocx').addEventListener('click', async () => {
   try {
     if (!templatePath) {
-      throw new Error('Word 템플릿(.docx) 파일을 먼저 선택하세요.');
+      throw new Error('Word/한글(.docx, .hwpx) 템플릿 파일을 먼저 선택하세요.');
     }
     if (templateVars.length === 0) {
       throw new Error('추출된 변수가 없습니다. 먼저 [변수 자동 추출]을 실행하세요.');
     }
+    const format = getTemplateFormat(templatePath);
 
     const data = {};
+    const emptyVars = [];
     templateVars.forEach((varName) => {
       const input = varInputs[varName];
       data[varName] = input ? input.value : '';
+      if (!data[varName]) emptyVars.push(varName);
     });
-
-    log('메일머지 문서 생성을 시작합니다...');
-
-    const content = fs.readFileSync(templatePath, 'binary');
-    const zip = new PizZip(content);
-
-    const doc = new Docxtemplater(zip, {
-      paragraphLoop: true,
-      linebreaks: true,
-      delimiters: { start: '{{', end: '}}' },
-    });
-
-    try {
-      doc.render(data);
-    } catch (renderErr) {
-      const details = (renderErr.properties && renderErr.properties.errors) || [];
-      const detailMsg = details.map((e) => e.properties && e.properties.explanation).filter(Boolean).join('\n');
-      throw new Error(detailMsg || renderErr.message || '템플릿 렌더링 중 오류가 발생했습니다.');
+    if (emptyVars.length > 0) {
+      log(`값이 입력되지 않은 변수 ${emptyVars.length}개는 빈 문자열로 치환됩니다: ${emptyVars.join(', ')}`, 'warn');
     }
 
-    const outputBuffer = doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+    log(`메일머지 문서 생성을 시작합니다... (형식: ${format.toUpperCase()})`);
+
+    let outputBuffer;
+    if (format === 'hwpx') {
+      outputBuffer = renderHwpxDocument(templatePath, data);
+    } else {
+      const content = safeReadFileSync(templatePath, 'binary');
+      const zip = new PizZip(content);
+
+      const doc = new Docxtemplater(zip, {
+        paragraphLoop: true,
+        linebreaks: true,
+        delimiters: { start: '{{', end: '}}' },
+      });
+
+      try {
+        doc.render(data);
+      } catch (renderErr) {
+        const details = (renderErr.properties && renderErr.properties.errors) || [];
+        const detailMsg = details.map((e) => e.properties && e.properties.explanation).filter(Boolean).join('\n');
+        throw new Error(detailMsg || renderErr.message || '템플릿 렌더링 중 오류가 발생했습니다.');
+      }
+
+      outputBuffer = doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+    }
 
     const baseName = path.basename(templatePath, path.extname(templatePath));
     const savePath = await ipcRenderer.invoke('dialog:saveFile', {
       title: '메일머지 결과 저장',
-      defaultPath: `${baseName}_결과.docx`,
-      filters: DOCX_FILTERS,
+      defaultPath: `${baseName}_결과.${format}`,
+      filters: format === 'hwpx' ? HWPX_FILTERS : DOCX_FILTERS,
     });
     if (!savePath) {
       log('저장이 취소되었습니다.', 'warn');
       return;
     }
 
-    fs.writeFileSync(savePath, outputBuffer);
+    safeWriteFileSync(savePath, outputBuffer);
     log(`메일머지 문서가 저장되었습니다: ${savePath}`, 'ok');
     alert('✅ 문서 생성이 완료되었습니다.');
   } catch (err) {
