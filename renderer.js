@@ -128,19 +128,43 @@ function decodeCsvBuffer(buffer) {
 }
 
 /**
+ * 워크북 파싱 캐시. 같은 파일을 (시트 목록 조회 → 구조 분석 → 변환 실행) 단계마다
+ * 매번 디스크에서 다시 읽고 다시 파싱하는 중복을 없애기 위함. 파일의 mtime이
+ * 바뀌면(사용자가 외부에서 파일을 다시 저장한 경우) 자동으로 무효화된다.
+ * 세션 중 여러 파일을 오가며 시험해볼 수 있으므로 무한정 커지지 않도록 개수를 제한한다.
+ */
+const workbookCache = new Map(); // filePath -> { mtimeMs, workbook }
+const WORKBOOK_CACHE_LIMIT = 8;
+
+/**
  * 파일 경로로부터 워크북을 읽는다.
  * - .csv: 인코딩 자동 판별 후 문자열로 파싱 (한글 CP949 CSV 대응)
  * - .xlsx/.xls: XLSX.readFile 사용
  */
 function readWorkbookSmart(filePath) {
+  const mtimeMs = fs.existsSync(filePath) ? fs.statSync(filePath).mtimeMs : null;
+  const cached = workbookCache.get(filePath);
+  if (cached && cached.mtimeMs === mtimeMs) {
+    return cached.workbook;
+  }
+
   const ext = path.extname(filePath).toLowerCase();
+  let workbook;
   if (ext === '.csv') {
     const buffer = safeReadFileSync(filePath);
     const text = decodeCsvBuffer(buffer);
-    return XLSX.read(text, { type: 'string', raw: false });
+    workbook = XLSX.read(text, { type: 'string', raw: false });
+  } else {
+    const buffer = safeReadFileSync(filePath);
+    workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   }
-  const buffer = safeReadFileSync(filePath);
-  return XLSX.read(buffer, { type: 'buffer', cellDates: true });
+
+  // Map은 삽입 순서를 보존하므로, 한도를 넘으면 가장 오래된 항목부터 제거(단순 FIFO)
+  if (workbookCache.size >= WORKBOOK_CACHE_LIMIT) {
+    workbookCache.delete(workbookCache.keys().next().value);
+  }
+  workbookCache.set(filePath, { mtimeMs, workbook });
+  return workbook;
 }
 
 document.getElementById('btnClearLog').addEventListener('click', () => {
