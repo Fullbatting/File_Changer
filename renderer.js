@@ -127,6 +127,18 @@ function decodeCsvBuffer(buffer) {
   return iconv.decode(buffer, 'cp949');
 }
 
+/** 파일의 현재 수정 시각(ms). 캐시 무효화 판단용. 파일이 없으면 null. */
+function getFileMtimeMs(filePath) {
+  return fs.existsSync(filePath) ? fs.statSync(filePath).mtimeMs : null;
+}
+
+/** Map 기반 캐시가 limit을 넘으면 가장 오래된(먼저 삽입된) 항목을 제거(단순 FIFO) */
+function evictOldestIfFull(map, limit) {
+  if (map.size >= limit) {
+    map.delete(map.keys().next().value);
+  }
+}
+
 /**
  * 워크북 파싱 캐시. 같은 파일을 (시트 목록 조회 → 구조 분석 → 변환 실행) 단계마다
  * 매번 디스크에서 다시 읽고 다시 파싱하는 중복을 없애기 위함. 파일의 mtime이
@@ -142,7 +154,7 @@ const WORKBOOK_CACHE_LIMIT = 8;
  * - .xlsx/.xls: XLSX.readFile 사용
  */
 function readWorkbookSmart(filePath) {
-  const mtimeMs = fs.existsSync(filePath) ? fs.statSync(filePath).mtimeMs : null;
+  const mtimeMs = getFileMtimeMs(filePath);
   const cached = workbookCache.get(filePath);
   if (cached && cached.mtimeMs === mtimeMs) {
     return cached.workbook;
@@ -159,10 +171,7 @@ function readWorkbookSmart(filePath) {
     workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   }
 
-  // Map은 삽입 순서를 보존하므로, 한도를 넘으면 가장 오래된 항목부터 제거(단순 FIFO)
-  if (workbookCache.size >= WORKBOOK_CACHE_LIMIT) {
-    workbookCache.delete(workbookCache.keys().next().value);
-  }
+  evictOldestIfFull(workbookCache, WORKBOOK_CACHE_LIMIT);
   workbookCache.set(filePath, { mtimeMs, workbook });
   return workbook;
 }
@@ -878,9 +887,8 @@ function parseHwpxRuns(xml) {
   return { runs, plainText: runs.map((r) => r.content).join('') };
 }
 
-/** section XML에서 {{변수명}} 목록을 추출 */
-function extractHwpxVariablesFromXml(xml) {
-  const { plainText } = parseHwpxRuns(xml);
+/** 이어붙인 순수 텍스트에서 {{변수명}} 목록을 추출 */
+function extractVariablesFromPlainText(plainText) {
   const regex = /\{\{\s*([^{}]+?)\s*\}\}/g;
   const found = [];
   let match;
@@ -891,9 +899,12 @@ function extractHwpxVariablesFromXml(xml) {
   return found;
 }
 
-/** section XML 안의 {{변수명}}을 data 값으로 치환한 새 XML 문자열을 반환 */
-function renderHwpxXml(xml, data) {
-  const { runs, plainText } = parseHwpxRuns(xml);
+/**
+ * section XML 안의 {{변수명}}을 data 값으로 치환한 새 XML 문자열을 반환.
+ * runs/plainText는 parseHwpxRuns(xml)의 결과를 그대로 전달받는다 — 변수 추출
+ * 단계에서 이미 계산해 둔 값을 재사용해 같은 정규식 스캔을 두 번 하지 않기 위함.
+ */
+function renderHwpxXml(xml, runs, plainText, data) {
   if (runs.length === 0) return xml;
 
   const regex = /\{\{\s*([^{}]+?)\s*\}\}/g;
@@ -940,33 +951,60 @@ function renderHwpxXml(xml, data) {
   return result;
 }
 
-/** .hwpx 템플릿에서 {{변수명}} 목록을 추출 */
-function extractHwpxVariables(filePath) {
+/**
+ * hwpx 파싱 캐시. "변수 자동 추출" 다음 "문서 생성"으로 이어지는 흐름에서
+ * 같은 템플릿 파일을 매번 디스크에서 다시 읽고, zip을 다시 열고, 각 섹션의
+ * <hp:t> 런을 다시 정규식으로 스캔하는 중복을 없애기 위함. 파일의 mtime이
+ * 바뀌면 자동으로 무효화된다. 캐시된 섹션의 xml/runs/plainText는 원본
+ * 그대로(치환 전) 보존되므로, 값을 바꿔 여러 번 "문서 생성"을 눌러도 매번
+ * 정확히 원본 플레이스홀더 기준으로 다시 치환된다 — zip 객체 자체는 재사용하되
+ * 매 생성마다 섹션 내용을 원본 기준으로 새로 덮어쓰기 때문에 안전하다.
+ */
+const hwpxCache = new Map(); // filePath -> { mtimeMs, zip, sections: [{ name, xml, runs, plainText }] }
+const HWPX_CACHE_LIMIT = 8;
+
+function getHwpxCacheEntry(filePath) {
+  const mtimeMs = getFileMtimeMs(filePath);
+  const cached = hwpxCache.get(filePath);
+  if (cached && cached.mtimeMs === mtimeMs) {
+    return cached;
+  }
+
   const content = safeReadFileSync(filePath);
   const zip = new PizZip(content);
-  const sections = getHwpxSectionNames(zip);
-  if (sections.length === 0) {
+  const sectionNames = getHwpxSectionNames(zip);
+  if (sectionNames.length === 0) {
     throw new Error('올바른 .hwpx 파일이 아닙니다. (Contents/section*.xml 없음)');
   }
+  const sections = sectionNames.map((name) => {
+    const xml = zip.file(name).asText();
+    const { runs, plainText } = parseHwpxRuns(xml);
+    return { name, xml, runs, plainText };
+  });
+
+  const entry = { mtimeMs, zip, sections };
+  evictOldestIfFull(hwpxCache, HWPX_CACHE_LIMIT);
+  hwpxCache.set(filePath, entry);
+  return entry;
+}
+
+/** .hwpx 템플릿에서 {{변수명}} 목록을 추출 */
+function extractHwpxVariables(filePath) {
+  const entry = getHwpxCacheEntry(filePath);
   const found = new Set();
-  sections.forEach((name) => {
-    extractHwpxVariablesFromXml(zip.file(name).asText()).forEach((v) => found.add(v));
+  entry.sections.forEach(({ plainText }) => {
+    extractVariablesFromPlainText(plainText).forEach((v) => found.add(v));
   });
   return Array.from(found);
 }
 
 /** .hwpx 템플릿의 {{변수명}}을 data 값으로 치환한 결과 파일 버퍼를 생성 */
 function renderHwpxDocument(filePath, data) {
-  const content = safeReadFileSync(filePath);
-  const zip = new PizZip(content);
-  const sections = getHwpxSectionNames(zip);
-  if (sections.length === 0) {
-    throw new Error('올바른 .hwpx 파일이 아닙니다. (Contents/section*.xml 없음)');
-  }
-  sections.forEach((name) => {
-    zip.file(name, renderHwpxXml(zip.file(name).asText(), data));
+  const entry = getHwpxCacheEntry(filePath);
+  entry.sections.forEach(({ name, xml, runs, plainText }) => {
+    entry.zip.file(name, renderHwpxXml(xml, runs, plainText, data));
   });
-  return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+  return entry.zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
 const varInputs = {}; // { varName: <input> }
