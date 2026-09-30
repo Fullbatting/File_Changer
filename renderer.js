@@ -8,6 +8,7 @@ const XLSX = require('xlsx');
 const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
 const iconv = require('iconv-lite');
+const ExcelJS = require('exceljs');
 
 /* =========================================================================
    0. 공통 유틸 (로그, 탭 전환)
@@ -716,6 +717,112 @@ ipcRenderer
     log(`프리셋 저장 위치를 확인하지 못했습니다: ${friendlyErrorMessage(err)}`, 'warn');
   });
 
+/**
+ * 문자열의 화면상 표시 폭을 추정한다. 한글/한자 등 전각 문자는 영문자보다
+ * 넓게 표시되므로 가중치를 주어, 엑셀 열 너비를 실제 내용에 맞게 계산할 때
+ * 한글이 많이 섞인 데이터에서도 "###" 잘림이 생기지 않도록 한다.
+ */
+function visualWidth(str) {
+  let w = 0;
+  for (const ch of String(str)) {
+    const code = ch.codePointAt(0);
+    const isWide =
+      (code >= 0x1100 && code <= 0x11ff) || // 한글 자모
+      (code >= 0x3130 && code <= 0x318f) || // 한글 호환 자모
+      (code >= 0xac00 && code <= 0xd7a3) || // 한글 완성형 음절
+      (code >= 0x4e00 && code <= 0x9fff); // CJK 통합 한자
+    w += isWide ? 1.8 : 1;
+  }
+  return w;
+}
+
+/**
+ * 값이 "숫자로 바꿔도 안전한" 문자열인지 판정한다. 단순히 숫자처럼 보이는지가
+ * 아니라, Number로 바꾼 뒤 다시 문자열화했을 때 원래 값과 완전히 같아야
+ * 통과한다 — 우편번호·사번처럼 앞자리가 0인 코드성 값은 숫자로 바꾸면
+ * 자릿수가 사라지므로(예: "03187" → 3187) 이 조건에서 자동으로 걸러진다.
+ */
+function isSafeNumericString(v) {
+  if (typeof v === 'number') return Number.isFinite(v);
+  if (typeof v !== 'string') return false;
+  const trimmed = v.trim();
+  if (trimmed === '' || !/^-?\d+(\.\d+)?$/.test(trimmed)) return false;
+  return String(Number(trimmed)) === trimmed;
+}
+
+/**
+ * [Load] 변환된 데이터를 서식이 적용된 엑셀 파일로 내보낸다 (exceljs 사용).
+ * - 헤더 행: 배경색 + 흰 글자 + 굵게 + 테두리, 첫 행 고정(스크롤해도 헤더 유지)
+ * - 열 너비: 헤더/값의 실제 표시 폭에 맞춰 자동 조정 → "###" 잘림 방지
+ * - 모든 값이 "안전한 숫자"인 열만 실제 숫자로 저장하고 천단위 구분(#,##0)
+ *   서식과 우측 정렬을 적용. 그 외에는 원래 문자열 그대로 좌측 정렬 유지.
+ */
+async function buildStyledExcelBuffer(headers, rows, sheetName) {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet(sheetName || 'Converted');
+
+  worksheet.addRow(headers);
+  worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+  const headerRow = worksheet.getRow(1);
+  headerRow.eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3864' } };
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FFB0B0B0' } },
+      bottom: { style: 'thin', color: { argb: 'FFB0B0B0' } },
+      left: { style: 'thin', color: { argb: 'FFB0B0B0' } },
+      right: { style: 'thin', color: { argb: 'FFB0B0B0' } },
+    };
+  });
+
+  // 열별로 "빈 값을 제외한 모든 값이 안전한 숫자인지" 판정
+  const columnIsNumeric = headers.map((h) => {
+    let sawAny = false;
+    for (const row of rows) {
+      const v = row[h];
+      if (v === '' || v === null || v === undefined) continue;
+      sawAny = true;
+      if (!isSafeNumericString(v)) return false;
+    }
+    return sawAny;
+  });
+  const columnHasDecimal = headers.map(
+    (h, i) => columnIsNumeric[i] && rows.some((row) => String(row[h]).includes('.'))
+  );
+
+  rows.forEach((row) => {
+    const values = headers.map((h, i) => {
+      const raw = row[h];
+      if (raw === '' || raw === null || raw === undefined) return '';
+      return columnIsNumeric[i] ? Number(raw) : raw;
+    });
+    const excelRow = worksheet.addRow(values);
+    excelRow.eachCell((cell, colNumber) => {
+      const i = colNumber - 1;
+      if (columnIsNumeric[i]) {
+        cell.numFmt = columnHasDecimal[i] ? '#,##0.######' : '#,##0';
+        cell.alignment = { horizontal: 'right' };
+      } else {
+        cell.alignment = { horizontal: 'left' };
+      }
+    });
+  });
+
+  headers.forEach((h, i) => {
+    let maxWidth = visualWidth(h);
+    rows.forEach((row) => {
+      const v = row[h];
+      if (v === '' || v === null || v === undefined) return;
+      maxWidth = Math.max(maxWidth, visualWidth(String(v)));
+    });
+    worksheet.getColumn(i + 1).width = Math.min(40, Math.max(8, Math.ceil(maxWidth) + 2));
+  });
+
+  return workbook.xlsx.writeBuffer();
+}
+
 document.getElementById('btnConvert').addEventListener('click', async () => {
   try {
     if (!fileAPath || headersA.length === 0) {
@@ -734,6 +841,7 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
       log(`매핑되지 않은 컬럼 ${unmappedColumns.length}개는 빈 값으로 채워집니다: ${unmappedColumns.join(', ')}`, 'warn');
     }
 
+    // [Extract] 원본(A) 파일에서 원시 데이터를 읽어온다
     log(`데이터 변환을 시작합니다... (A 시트: ${sheetAName || '첫 번째 시트'})`);
 
     const workbook = readWorkbookSmart(fileAPath);
@@ -746,6 +854,8 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
       throw new Error('원본(A) 파일에 변환할 데이터 행이 없습니다.');
     }
 
+    // [Transform] 매핑 규칙(코드와 분리되어 프리셋으로 저장/불러오기 가능)에 따라
+    // A 양식의 각 행을 B 양식의 컬럼 구조로 재구성한다
     const convertedRows = sourceRows.map((row) => {
       const newRow = {};
       headersB.forEach((bCol) => {
@@ -767,10 +877,8 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
       return;
     }
 
-    const newSheet = XLSX.utils.json_to_sheet(convertedRows, { header: headersB });
-    const newWorkbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(newWorkbook, newSheet, 'Converted');
-    const outputBuffer = XLSX.write(newWorkbook, { bookType: 'xlsx', type: 'buffer' });
+    // [Load] 헤더 서식·열 너비·숫자 서식을 적용하여 완성된 엑셀 파일로 저장한다
+    const outputBuffer = await buildStyledExcelBuffer(headersB, convertedRows, sheetBName);
     safeWriteFileSync(savePath, outputBuffer);
 
     log(`변환된 파일이 저장되었습니다: ${savePath}`, 'ok');

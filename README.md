@@ -2,7 +2,7 @@
 
 Electron + Node.js + JavaScript로 만든 데스크톱 프로그램입니다. 파이썬은 사용하지 않습니다.
 
-- **탭 1. 문서 양식 변환기**: 엑셀/CSV(`.xlsx`, `.xls`, `.csv`) 파일의 컬럼을 다른 엑셀 양식에 매핑하여 변환. 매핑 규칙은 이름 붙여 프리셋으로 저장해 다음에 바로 불러오거나 수정할 수 있습니다.
+- **탭 1. 문서 양식 변환기**: 엑셀/CSV(`.xlsx`, `.xls`, `.csv`) 파일의 컬럼을 다른 엑셀 양식에 매핑하여 변환. 매핑 규칙은 이름 붙여 프리셋으로 저장해 다음에 바로 불러오거나 수정할 수 있습니다. 내부적으로 Extract(읽기) → Transform(매핑) → Load(서식 적용 저장)의 ETL 구조로 동작하며, 결과 파일은 헤더 색상/테두리와 자동 맞춤 열 너비, 숫자 열 천단위 서식이 적용된 상태로 생성됩니다.
 - **탭 2. 메일머지 자동기입**: Word(`.docx`) 또는 한글(`.hwpx`) 템플릿의 `{{변수명}}`을 자동 추출하여 값 입력 후 문서 생성
 
 ## 설치 없이 바로 실행하기 (Windows)
@@ -44,7 +44,8 @@ npm start     # 앱 실행 (electron .)
 
 ## 주요 오픈소스 라이브러리
 
-- [xlsx (SheetJS)](https://github.com/SheetJS/sheetjs) — 엑셀/CSV 처리 (Apache-2.0)
+- [xlsx (SheetJS)](https://github.com/SheetJS/sheetjs) — 엑셀/CSV 읽기(Extract) (Apache-2.0)
+- [exceljs](https://github.com/exceljs/exceljs) — 서식이 적용된 엑셀 파일 쓰기(Load) (MIT)
 - [docxtemplater](https://github.com/open-xml-templating/docxtemplater) — Word 템플릿 메일머지 (MIT)
 - [pizzip](https://github.com/open-xml-templating/pizzip) — zip/OOXML 처리 (MIT)
 - [iconv-lite](https://github.com/ashtuchkin/iconv-lite) — CSV 인코딩 변환 (MIT)
