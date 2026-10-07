@@ -60,12 +60,13 @@
           <table class="mapping-table" id="mappingTable">
             <thead>
               <tr>
-                <th style="width:45%;">타겟(B) 컬럼</th>
-                <th style="width:55%;">원본(A) 컬럼 매핑</th>
+                <th style="width:38%;">타겟(B) 컬럼</th>
+                <th style="width:47%;">원본(A) 컬럼 매핑</th>
+                <th style="width:15%;" title="체크하면 이 컬럼이 비어 있는 행을 저장 전 검증 단계에서 알려줍니다.">필수</th>
               </tr>
             </thead>
             <tbody id="mappingTableBody">
-              <tr><td colspan="2" class="empty-hint">먼저 [구조 분석]을 실행하세요.</td></tr>
+              <tr><td colspan="3" class="empty-hint">먼저 [구조 분석]을 실행하세요.</td></tr>
             </tbody>
           </table>
         </div>
@@ -90,7 +91,7 @@
 
       <div class="card">
         <h2><span class="step-badge">3</span>변환 및 저장</h2>
-        <p class="desc">매핑 규칙에 따라 A 파일 데이터를 B 파일 구조로 재구성하여 새 엑셀 파일을 생성합니다.</p>
+        <p class="desc">매핑 규칙에 따라 A 파일 데이터를 B 파일 구조로 재구성합니다. 저장 전에 검증 결과와 미리보기를 확인할 수 있습니다.</p>
         <div class="btn-row">
           <button id="btnConvert" class="btn primary">⚙️ 변환 실행 및 저장</button>
         </div>
@@ -154,6 +155,24 @@
       <div class="btn-row modal-btn-row">
         <button id="presetModalCancel" class="btn ghost">취소</button>
         <button id="presetModalSave" class="btn primary">저장</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 변환 결과 확인(검증 + 미리보기) 모달 -->
+  <div id="convertReviewModal" class="modal-overlay" hidden>
+    <div class="modal-card modal-card-wide">
+      <h3>변환 결과 확인</h3>
+      <div id="convertReviewSummary" class="review-summary"></div>
+      <div class="table-wrap review-preview-wrap">
+        <table class="mapping-table">
+          <thead><tr id="convertReviewTableHead"></tr></thead>
+          <tbody id="convertReviewTableBody"></tbody>
+        </table>
+      </div>
+      <div class="btn-row modal-btn-row">
+        <button id="convertReviewCancel" class="btn ghost">취소하고 수정</button>
+        <button id="convertReviewProceed" class="btn primary">그대로 저장</button>
       </div>
     </div>
   </div>

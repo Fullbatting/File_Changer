@@ -378,6 +378,45 @@ table.mapping-table select {
   justify-content: flex-end;
 }
 
+.modal-card-wide {
+  max-width: 640px;
+}
+
+.review-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.review-summary .review-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.review-summary .review-line.ok {
+  color: var(--color-success);
+}
+
+.review-summary .review-line.warn {
+  color: var(--color-warning);
+  font-weight: 600;
+}
+
+.review-preview-wrap {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.review-preview-wrap table.mapping-table th,
+.review-preview-wrap table.mapping-table td {
+  font-size: 12px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
 /* ---------- Dynamic form (mail merge variables) ---------- */
 .var-form-grid {
   display: grid;

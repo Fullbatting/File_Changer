@@ -270,9 +270,12 @@ let fileAPath = null;
 let fileBPath = null;
 let sheetAName = null;
 let sheetBName = null;
+let headerRowIndexA = 0; // 자동 감지된 헤더 행의 실제 시트 행 인덱스(0-based)
+let headerRowIndexB = 0;
 let headersA = [];
 let headersB = [];
 let mapping = {}; // { bColumn: aColumn|null }
+let requiredColumns = new Set(); // 저장 전 검증에서 "필수"로 체크된 B 컬럼
 
 const dropA = document.getElementById('dropA');
 const dropB = document.getElementById('dropB');
@@ -329,7 +332,10 @@ function refreshSheetSelector(filePath, sheetRowEl, sheetSelectEl, onChange) {
 function resetAnalysisState() {
   headersA = [];
   headersB = [];
+  headerRowIndexA = 0;
+  headerRowIndexB = 0;
   mapping = {};
+  requiredColumns = new Set();
   currentPresetId = null;
   renderMappingTable();
   if (presetSelect) presetSelect.value = '';
@@ -355,7 +361,48 @@ bindDropzone(dropB, fileNameB, EXCEL_FILTERS, (p) => {
   });
 });
 
-/** 엑셀/CSV 파일의 지정된 시트에서 첫 번째 행(헤더)을 배열로 추출 */
+/**
+ * 행(배열) 하나가 "헤더(컬럼명) 행"일 가능성이 얼마나 되는지 점수로 매긴다.
+ * - 완전히 빈 행: 후보 아님(-1)
+ * - 여러 칸짜리 표인데 딱 한 칸만 채워진 행: "2026년 명단"류 제목 행일 가능성이
+ *   높으므로 낮은 점수(0)
+ * - 그 외에는 채워진 칸 수가 많을수록 높은 점수. 평균 글자 수가 아주 길면
+ *   (문장형 텍스트) 헤더보다는 본문/설명일 가능성이 있어 약하게 감점.
+ */
+function scoreHeaderRowCandidate(row) {
+  const nonEmpty = row.filter((c) => String(c).trim() !== '');
+  if (nonEmpty.length === 0) return -1;
+  if (nonEmpty.length === 1 && row.length > 1) return 0;
+  const avgLen = nonEmpty.reduce((sum, c) => sum + String(c).trim().length, 0) / nonEmpty.length;
+  return avgLen > 20 ? nonEmpty.length * 0.5 : nonEmpty.length;
+}
+
+/**
+ * 시트 상단 최대 10행을 살펴보고 실제 헤더 행으로 보이는 행의 인덱스(0-based,
+ * 시트의 실제 행 번호와 일치)를 추정한다. "2026년 하반기 명단"처럼 제목 행이
+ * 1행에 있어 헤더가 그 아래에 있는 경우를 걸러내기 위함. 점수가 동일하면 더
+ * 앞쪽 행(기존 동작인 1행)을 우선하므로, 평범한 파일에서는 항상 1행이 그대로
+ * 선택된다.
+ */
+function detectHeaderRowIndex(rawRows) {
+  const scanLimit = Math.min(10, rawRows.length);
+  let bestIndex = 0;
+  let bestScore = -Infinity;
+  for (let i = 0; i < scanLimit; i++) {
+    const score = scoreHeaderRowCandidate(rawRows[i]);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
+  }
+  return bestIndex;
+}
+
+/**
+ * 엑셀/CSV 파일의 지정된 시트에서 헤더 행을 자동으로 찾아 배열로 추출한다.
+ * { headers, headerRowIndex } 를 반환하며, headerRowIndex는 변환 시 데이터
+ * 행을 정확히 그 아래부터 읽기 위해 호출한 쪽에서 보관해 두어야 한다.
+ */
 function extractHeaders(filePath, sheetName) {
   const workbook = readWorkbookSmart(filePath);
   const targetSheetName = sheetName || workbook.SheetNames[0];
@@ -363,21 +410,84 @@ function extractHeaders(filePath, sheetName) {
     throw new Error(`시트를 찾을 수 없습니다${sheetName ? ` (${sheetName})` : ''}.`);
   }
   const sheet = workbook.Sheets[targetSheetName];
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false });
-  if (!rows || rows.length === 0) throw new Error(`"${targetSheetName}" 시트에 데이터가 비어 있습니다.`);
-  const headerRow = rows[0].map((h) => String(h).trim()).filter((h) => h !== '');
+  // blankrows:false를 쓰지 않는다 — 빈 행을 걸러내면 배열 인덱스가 실제 시트
+  // 행 번호와 어긋나서, 아래에서 구한 headerRowIndex를 이후 데이터 읽기(range)에
+  // 그대로 재사용할 수 없게 된다.
+  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+  if (!rawRows || rawRows.length === 0) throw new Error(`"${targetSheetName}" 시트에 데이터가 비어 있습니다.`);
+
+  const headerRowIndex = detectHeaderRowIndex(rawRows);
+  const headerRow = rawRows[headerRowIndex].map((h) => String(h).trim()).filter((h) => h !== '');
   if (headerRow.length === 0) throw new Error(`"${targetSheetName}" 시트에서 헤더(컬럼명) 행을 찾을 수 없습니다.`);
-  return headerRow;
+  return { headers: headerRow, headerRowIndex };
+}
+
+/** 두 문자열 간 편집거리(Levenshtein distance)를 계산 */
+function levenshteinDistance(a, b) {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+const FUZZY_MAX_DISTANCE = 2; // 절대 편집거리 상한
+const FUZZY_MAX_RATIO = 0.34; // 상대 편집거리 상한(짧은 이름에서 과매칭 방지)
+
+/**
+ * headersA 중 bCol과 가장 비슷한 컬럼을 찾는다.
+ * 1순위: 공백 제거 + 소문자 변환 후 완전히 같은 이름("exact").
+ * 2순위: 편집거리가 절대/상대 기준 모두를 만족하면서 유일하게 가장 가까운
+ *   후보가 있을 때만 "fuzzy"로 매칭한다. 후보가 여러 개 동률이면 모호하므로
+ *   매칭하지 않는다 — 잘못 자동 매핑되어 데이터가 다른 컬럼에 들어가는 것이
+ *   매핑이 안 되는 것보다 더 나쁘다.
+ * usedHeadersA에 담긴 컬럼은 이미 다른 B 컬럼에 매칭되었으므로 후보에서 제외해
+ * 하나의 A 컬럼이 여러 B 컬럼에 중복 자동매핑되지 않도록 한다.
+ */
+function findAutoMatch(bCol, headersA, usedHeadersA) {
+  const normalize = (s) => s.replace(/\s+/g, '').toLowerCase();
+  const bNorm = normalize(bCol);
+
+  const exact = headersA.find((a) => !usedHeadersA.has(a) && normalize(a) === bNorm);
+  if (exact) return { match: exact, reason: 'exact' };
+
+  const candidates = headersA
+    .filter((a) => !usedHeadersA.has(a))
+    .map((a) => {
+      const aNorm = normalize(a);
+      const dist = levenshteinDistance(aNorm, bNorm);
+      const ratio = dist / Math.max(aNorm.length, bNorm.length, 1);
+      return { a, dist, ratio };
+    })
+    .filter((c) => c.dist > 0 && c.dist <= FUZZY_MAX_DISTANCE && c.ratio <= FUZZY_MAX_RATIO)
+    .sort((x, y) => x.dist - y.dist);
+
+  if (candidates.length > 0 && (candidates.length === 1 || candidates[0].dist < candidates[1].dist)) {
+    return { match: candidates[0].a, reason: 'fuzzy' };
+  }
+  return { match: null, reason: null };
 }
 
 function renderMappingTable() {
   mappingTableBody.innerHTML = '';
   mapping = {};
+  requiredColumns = new Set();
 
   if (headersB.length === 0) {
-    mappingTableBody.innerHTML = '<tr><td colspan="2" class="empty-hint">먼저 [구조 분석]을 실행하세요.</td></tr>';
+    mappingTableBody.innerHTML = '<tr><td colspan="3" class="empty-hint">먼저 [구조 분석]을 실행하세요.</td></tr>';
     return;
   }
+
+  const usedHeadersA = new Set();
 
   headersB.forEach((bCol) => {
     const tr = document.createElement('tr');
@@ -402,12 +512,15 @@ function renderMappingTable() {
       select.appendChild(opt);
     });
 
-    // 이름이 동일하거나 유사하면 자동 매핑 (편의 기능)
-    const normalize = (s) => s.replace(/\s+/g, '').toLowerCase();
-    const autoMatch = headersA.find((a) => normalize(a) === normalize(bCol));
+    // 이름이 동일하거나(완전 일치) 비슷하면(편집거리 기반 퍼지 매칭) 자동 매핑
+    const { match: autoMatch, reason } = findAutoMatch(bCol, headersA, usedHeadersA);
     if (autoMatch) {
       select.value = autoMatch;
       mapping[bCol] = autoMatch;
+      usedHeadersA.add(autoMatch);
+      if (reason === 'fuzzy') {
+        log(`"${bCol}" 컬럼을 이름이 비슷한 "${autoMatch}" 컬럼에 자동 매핑했습니다. 맞는지 확인하세요.`, 'warn');
+      }
     } else {
       mapping[bCol] = '';
     }
@@ -418,7 +531,28 @@ function renderMappingTable() {
 
     tdSelect.appendChild(select);
     tr.appendChild(tdSelect);
+
+    const tdRequired = document.createElement('td');
+    tdRequired.style.textAlign = 'center';
+    const requiredCheckbox = document.createElement('input');
+    requiredCheckbox.type = 'checkbox';
+    requiredCheckbox.dataset.bcolumn = bCol;
+    requiredCheckbox.addEventListener('change', () => {
+      if (requiredCheckbox.checked) requiredColumns.add(bCol);
+      else requiredColumns.delete(bCol);
+    });
+    tdRequired.appendChild(requiredCheckbox);
+    tr.appendChild(tdRequired);
+
     mappingTableBody.appendChild(tr);
+  });
+}
+
+/** requiredColumns 상태를 매핑 테이블의 "필수" 체크박스에도 반영(반영 안 된 나머지는 해제) */
+function applyRequiredColumnsToTable(columns) {
+  requiredColumns = new Set(columns || []);
+  mappingTableBody.querySelectorAll('input[type="checkbox"][data-bcolumn]').forEach((checkbox) => {
+    checkbox.checked = requiredColumns.has(checkbox.dataset.bcolumn);
   });
 }
 
@@ -428,8 +562,18 @@ document.getElementById('btnAnalyze').addEventListener('click', () => {
       throw new Error('원본(A) 파일과 타겟 양식(B) 파일을 모두 선택하세요.');
     }
     log(`구조 분석을 시작합니다... (A 시트: ${sheetAName || '첫 번째 시트'}, B 시트: ${sheetBName || '첫 번째 시트'})`);
-    headersA = extractHeaders(fileAPath, sheetAName);
-    headersB = extractHeaders(fileBPath, sheetBName);
+    const resultA = extractHeaders(fileAPath, sheetAName);
+    const resultB = extractHeaders(fileBPath, sheetBName);
+    headersA = resultA.headers;
+    headersB = resultB.headers;
+    headerRowIndexA = resultA.headerRowIndex;
+    headerRowIndexB = resultB.headerRowIndex;
+    if (headerRowIndexA > 0) {
+      log(`원본(A) 파일: 제목/빈 행으로 보이는 ${headerRowIndexA}개 행을 건너뛰고 ${headerRowIndexA + 1}행을 헤더로 인식했습니다.`, 'warn');
+    }
+    if (headerRowIndexB > 0) {
+      log(`타겟(B) 파일: 제목/빈 행으로 보이는 ${headerRowIndexB}개 행을 건너뛰고 ${headerRowIndexB + 1}행을 헤더로 인식했습니다.`, 'warn');
+    }
     log(`원본(A) 컬럼 ${headersA.length}개, 타겟(B) 컬럼 ${headersB.length}개 발견`, 'ok');
 
     renderMappingTable();
@@ -460,6 +604,7 @@ document.getElementById('btnSaveMapping').addEventListener('click', async () => 
       sourceSheet: sheetAName,
       targetSheet: sheetBName,
       mapping,
+      requiredColumns: Array.from(requiredColumns),
     };
     safeWriteFileSync(savePath, JSON.stringify(payload, null, 2));
     log(`매핑 규칙이 저장되었습니다: ${savePath}`, 'ok');
@@ -512,6 +657,9 @@ document.getElementById('btnLoadMapping').addEventListener('click', async () => 
     }
 
     const { appliedCount, skippedCount } = applyMappingToTable(loadedMapping);
+    if (Array.isArray(payload.requiredColumns)) {
+      applyRequiredColumnsToTable(payload.requiredColumns.filter((c) => headersB.includes(c)));
+    }
     currentPresetId = null;
     if (presetSelect) presetSelect.value = '';
     log(`매핑 규칙을 불러왔습니다: ${paths[0]} (적용 ${appliedCount}건, 불일치 ${skippedCount}건)`, 'ok');
@@ -641,6 +789,9 @@ if (presetSelect) {
     }
 
     const { appliedCount, skippedCount } = applyMappingToTable(preset.mapping);
+    if (Array.isArray(preset.requiredColumns)) {
+      applyRequiredColumnsToTable(preset.requiredColumns.filter((c) => headersB.includes(c)));
+    }
     currentPresetId = id;
     log(`프리셋 "${preset.name}"을(를) 적용했습니다. (적용 ${appliedCount}건, 불일치 ${skippedCount}건)`, 'ok');
   });
@@ -670,6 +821,7 @@ document.getElementById('btnSavePreset').addEventListener('click', async () => {
       sourceHeaders: headersA,
       targetHeaders: headersB,
       mapping: { ...mapping },
+      requiredColumns: Array.from(requiredColumns),
       createdAt: existingRecord ? existingRecord.createdAt : now,
       updatedAt: now,
     };
@@ -748,6 +900,119 @@ function isSafeNumericString(v) {
   const trimmed = v.trim();
   if (trimmed === '' || !/^-?\d+(\.\d+)?$/.test(trimmed)) return false;
   return String(Number(trimmed)) === trimmed;
+}
+
+/**
+ * 변환된 데이터를 저장하기 전에 검증한다.
+ * - 필수로 지정된 B 컬럼에 빈 값이 있는 행의 수와 예시를 모은다.
+ * - 전체 컬럼 값이 완전히 똑같은 행(중복 행)의 수와 예시를 모은다.
+ * (react-spreadsheet-import 등 CSV 임포트 도구들의 "Validate Data" 단계를
+ * 참고했으며, 문제가 있어도 저장을 막지는 않고 사용자가 확인 후 진행/취소를
+ * 선택하게 한다 — 그 도구들의 allowInvalidSubmit 기본 동작과 동일한 취지.)
+ */
+function validateConvertedRows(convertedRows, headersB, requiredCols) {
+  const missingByColumn = {};
+  requiredCols.forEach((col) => {
+    missingByColumn[col] = 0;
+  });
+
+  const seen = new Map(); // 행 내용(JSON) -> 처음 나온 행 번호(1-based)
+  let duplicateCount = 0;
+  const duplicateExamples = [];
+
+  convertedRows.forEach((row, idx) => {
+    requiredCols.forEach((col) => {
+      const v = row[col];
+      if (v === '' || v === null || v === undefined) missingByColumn[col] += 1;
+    });
+
+    const key = headersB.map((h) => row[h]).join('\u0001');
+    if (seen.has(key)) {
+      duplicateCount += 1;
+      if (duplicateExamples.length < 5) {
+        duplicateExamples.push({ row: idx + 1, duplicateOf: seen.get(key) + 1 });
+      }
+    } else {
+      seen.set(key, idx);
+    }
+  });
+
+  return { missingByColumn, duplicateCount, duplicateExamples };
+}
+
+// 변환 결과 확인(검증 + 미리보기) 모달
+const convertReviewModal = document.getElementById('convertReviewModal');
+const convertReviewSummary = document.getElementById('convertReviewSummary');
+const convertReviewTableHead = document.getElementById('convertReviewTableHead');
+const convertReviewTableBody = document.getElementById('convertReviewTableBody');
+const convertReviewProceedBtn = document.getElementById('convertReviewProceed');
+const convertReviewCancelBtn = document.getElementById('convertReviewCancel');
+
+const CONVERT_PREVIEW_ROW_LIMIT = 5;
+
+/**
+ * 변환 결과 확인 모달을 띄운다. 검증 요약 + 앞부분 미리보기를 보여주고,
+ * "그대로 저장"(true) / "취소하고 수정"(false)을 Promise로 반환한다.
+ */
+function showConvertReviewModal(headersB, convertedRows, validation) {
+  return new Promise((resolve) => {
+    const lines = [];
+    lines.push(`<div class="review-line ok">총 <b>${convertedRows.length}</b>행이 변환되었습니다.</div>`);
+
+    const missingEntries = Object.entries(validation.missingByColumn).filter(([, count]) => count > 0);
+    if (missingEntries.length > 0) {
+      const detail = missingEntries.map(([col, count]) => `"${xmlEscape(col)}" ${count}건`).join(', ');
+      lines.push(`<div class="review-line warn">⚠ 필수 컬럼 값이 비어 있는 행: ${detail}</div>`);
+    } else if (Object.keys(validation.missingByColumn).length > 0) {
+      lines.push(`<div class="review-line ok">✓ 필수 컬럼에 빈 값이 없습니다.</div>`);
+    }
+
+    if (validation.duplicateCount > 0) {
+      const examples = validation.duplicateExamples
+        .map((e) => `${e.row}행(${e.duplicateOf}행과 동일)`)
+        .join(', ');
+      lines.push(`<div class="review-line warn">⚠ 모든 컬럼 값이 동일한 중복 행 ${validation.duplicateCount}건: ${examples}${validation.duplicateCount > validation.duplicateExamples.length ? ' 등' : ''}</div>`);
+    } else {
+      lines.push(`<div class="review-line ok">✓ 완전히 중복된 행이 없습니다.</div>`);
+    }
+
+    convertReviewSummary.innerHTML = lines.join('');
+
+    convertReviewTableHead.innerHTML = headersB.map((h) => `<th>${xmlEscape(h)}</th>`).join('');
+    const previewRows = convertedRows.slice(0, CONVERT_PREVIEW_ROW_LIMIT);
+    convertReviewTableBody.innerHTML = previewRows
+      .map(
+        (row) =>
+          `<tr>${headersB
+            .map((h) => `<td>${row[h] === '' || row[h] === null || row[h] === undefined ? '' : xmlEscape(String(row[h]))}</td>`)
+            .join('')}</tr>`
+      )
+      .join('');
+    if (convertedRows.length > previewRows.length) {
+      convertReviewTableBody.innerHTML += `<tr><td colspan="${headersB.length}" class="empty-hint">... 외 ${convertedRows.length - previewRows.length}행</td></tr>`;
+    }
+
+    convertReviewModal.hidden = false;
+
+    const cleanup = () => {
+      convertReviewModal.hidden = true;
+      convertReviewProceedBtn.onclick = null;
+      convertReviewCancelBtn.onclick = null;
+      convertReviewModal.onclick = null;
+    };
+
+    convertReviewProceedBtn.onclick = () => {
+      cleanup();
+      resolve(true);
+    };
+    convertReviewCancelBtn.onclick = () => {
+      cleanup();
+      resolve(false);
+    };
+    convertReviewModal.onclick = (e) => {
+      if (e.target === convertReviewModal) convertReviewCancelBtn.click();
+    };
+  });
 }
 
 /**
@@ -841,14 +1106,14 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
       log(`매핑되지 않은 컬럼 ${unmappedColumns.length}개는 빈 값으로 채워집니다: ${unmappedColumns.join(', ')}`, 'warn');
     }
 
-    // [Extract] 원본(A) 파일에서 원시 데이터를 읽어온다
+    // [Extract] 원본(A) 파일에서 원시 데이터를 읽어온다 (자동 감지된 헤더 행 다음부터)
     log(`데이터 변환을 시작합니다... (A 시트: ${sheetAName || '첫 번째 시트'})`);
 
     const workbook = readWorkbookSmart(fileAPath);
     const targetSheetName = sheetAName || workbook.SheetNames[0];
     const sheet = workbook.Sheets[targetSheetName];
     if (!sheet) throw new Error(`원본(A) 파일에서 "${targetSheetName}" 시트를 찾을 수 없습니다.`);
-    const sourceRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    const sourceRows = XLSX.utils.sheet_to_json(sheet, { defval: '', range: headerRowIndexA });
 
     if (sourceRows.length === 0) {
       throw new Error('원본(A) 파일에 변환할 데이터 행이 없습니다.');
@@ -866,6 +1131,22 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
     });
 
     log(`총 ${convertedRows.length}행이 변환되었습니다.`, 'ok');
+
+    // 저장 전 검증 + 미리보기 확인 (필수 컬럼 빈 값 / 완전 중복 행)
+    const validation = validateConvertedRows(convertedRows, headersB, Array.from(requiredColumns));
+    const missingTotal = Object.values(validation.missingByColumn).reduce((sum, n) => sum + n, 0);
+    if (missingTotal > 0) {
+      log(`필수 컬럼 값이 비어 있는 행이 있습니다 (총 ${missingTotal}건). 확인 모달에서 자세한 내용을 볼 수 있습니다.`, 'warn');
+    }
+    if (validation.duplicateCount > 0) {
+      log(`모든 컬럼 값이 동일한 중복 행이 ${validation.duplicateCount}건 있습니다.`, 'warn');
+    }
+
+    const proceed = await showConvertReviewModal(headersB, convertedRows, validation);
+    if (!proceed) {
+      log('사용자가 확인 단계에서 취소했습니다. 매핑을 수정한 뒤 다시 시도하세요.', 'warn');
+      return;
+    }
 
     const savePath = await ipcRenderer.invoke('dialog:saveFile', {
       title: '변환된 엑셀 파일 저장',
