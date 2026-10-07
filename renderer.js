@@ -1176,14 +1176,43 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
 let templatePath = null;
 let templateVars = [];
 
+// 메일머지 입력 방식: 'manual'(1건 직접 입력) | 'batch'(데이터 파일로 일괄 생성)
+let mailMergeMode = 'manual';
+let mmDataPath = null;
+let mmDataSheetName = null;
+let mmDataHeaderRowIndex = 0;
+let mmDataHeaders = [];
+let mmDataRows = [];
+let mmColumnMapping = {}; // { 템플릿변수: 데이터컬럼명 }
+let mmFilenameColumn = '';
+
 const dropTemplate = document.getElementById('dropTemplate');
 const fileNameTemplate = document.getElementById('fileNameTemplate');
 const extractStatus = document.getElementById('extractStatus');
 const varFormGrid = document.getElementById('varFormGrid');
+const manualInputCard = document.getElementById('manualInputCard');
+const batchInputCard = document.getElementById('batchInputCard');
+const btnGenerateDocxEl = document.getElementById('btnGenerateDocx');
+const btnGenerateBatchEl = document.getElementById('btnGenerateBatch');
+const generateCardDesc = document.getElementById('generateCardDesc');
 
 bindDropzone(dropTemplate, fileNameTemplate, TEMPLATE_FILTERS, (p) => {
   templatePath = p;
   log(`템플릿 선택됨: ${p}`);
+});
+
+document.querySelectorAll('input[name="mmMode"]').forEach((radio) => {
+  radio.addEventListener('change', (e) => {
+    mailMergeMode = e.target.value;
+    const isBatch = mailMergeMode === 'batch';
+    manualInputCard.hidden = isBatch;
+    batchInputCard.hidden = !isBatch;
+    btnGenerateDocxEl.hidden = isBatch;
+    btnGenerateBatchEl.hidden = !isBatch;
+    generateCardDesc.textContent = isBatch
+      ? '데이터 파일의 각 행마다 문서를 생성하여 선택한 폴더에 저장합니다.'
+      : '입력한 값으로 템플릿 변수를 치환하여 결과 문서(.docx 또는 .hwpx)를 생성합니다.';
+  });
 });
 
 /** 파일 확장자로 템플릿 형식을 판별. 지원하지 않는 형식은 안내 메시지와 함께 예외를 던짐 */
@@ -1196,6 +1225,16 @@ function getTemplateFormat(filePath) {
     throw new Error('구형 .hwp(바이너리) 포맷은 지원하지 않습니다. 한글 프로그램에서 "다른 이름으로 저장 > HWPX"로 변환한 뒤 다시 시도하세요.');
   }
   throw new Error('지원하지 않는 템플릿 형식입니다. .docx, .dotx, .hwpx 또는 .hwpt 파일을 선택하세요.');
+}
+
+/**
+ * docxtemplater는 {{#루프}}...{{/루프}}, {{^조건}}, {{.}} 같은 제어 태그도
+ * 같은 {{ }} 구분자를 쓴다. 우리는 반복/조건문 UI를 제공하지 않지만, 혹시
+ * 그런 템플릿이 선택되어도 이 태그들이 "변수"로 잘못 추출되어 입력창이나
+ * 매핑 테이블에 나타나지 않도록 걸러낸다.
+ */
+function isTemplateControlToken(varName) {
+  return /^[#/^.]/.test(varName.trim());
 }
 
 /** docx 파일 내부 word/document.xml 에서 {{변수명}} 패턴을 추출 */
@@ -1218,10 +1257,57 @@ function extractTemplateVariables(filePath) {
   let match;
   while ((match = regex.exec(plainText)) !== null) {
     const varName = match[1].trim();
-    if (varName) found.add(varName);
+    if (varName && !isTemplateControlToken(varName)) found.add(varName);
   }
 
   return Array.from(found);
+}
+
+/**
+ * docx 템플릿 원본 버퍼 캐시. 메일머지 일괄 생성에서 같은 템플릿 파일을
+ * 행(row)마다 매번 디스크에서 다시 읽지 않기 위함. docxtemplater는 render()를
+ * 호출하면 내부 상태가 치환된 결과로 바뀌어 같은 인스턴스를 재사용할 수
+ * 없으므로, 캐시하는 것은 원본 바이트(zip 생성 전)까지만 — PizZip/Docxtemplater
+ * 인스턴스는 매번 새로 만들어 행끼리 서로 영향을 주지 않게 한다.
+ */
+const docxBufferCache = new Map(); // filePath -> { mtimeMs, buffer }
+const DOCX_CACHE_LIMIT = 8;
+
+function getDocxTemplateBuffer(filePath) {
+  const mtimeMs = getFileMtimeMs(filePath);
+  const cached = docxBufferCache.get(filePath);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.buffer;
+
+  const buffer = safeReadFileSync(filePath, 'binary');
+  evictOldestIfFull(docxBufferCache, DOCX_CACHE_LIMIT);
+  docxBufferCache.set(filePath, { mtimeMs, buffer });
+  return buffer;
+}
+
+/** .docx/.dotx 템플릿의 {{변수명}}을 data 값으로 치환한 결과 파일 버퍼를 생성 */
+function renderDocxDocument(filePath, data) {
+  const content = getDocxTemplateBuffer(filePath);
+  const zip = new PizZip(content);
+  const doc = new Docxtemplater(zip, {
+    paragraphLoop: true,
+    linebreaks: true,
+    delimiters: { start: '{{', end: '}}' },
+  });
+
+  try {
+    doc.render(data);
+  } catch (renderErr) {
+    const details = (renderErr.properties && renderErr.properties.errors) || [];
+    const detailMsg = details.map((e) => e.properties && e.properties.explanation).filter(Boolean).join('\n');
+    throw new Error(detailMsg || renderErr.message || '템플릿 렌더링 중 오류가 발생했습니다.');
+  }
+
+  return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
+/** 템플릿 형식에 맞는 렌더링 함수를 호출하는 공용 디스패처 (직접 입력/일괄 생성 모두 사용) */
+function renderMergedDocument(filePath, format, data) {
+  return format === 'hwpx' ? renderHwpxDocument(filePath, data) : renderDocxDocument(filePath, data);
 }
 
 /* -------------------------------------------------------------------------
@@ -1283,7 +1369,7 @@ function extractVariablesFromPlainText(plainText) {
   let match;
   while ((match = regex.exec(plainText)) !== null) {
     const varName = match[1].trim();
-    if (varName) found.push(varName);
+    if (varName && !isTemplateControlToken(varName)) found.push(varName);
   }
   return found;
 }
@@ -1426,6 +1512,326 @@ function renderVarForm() {
   });
 }
 
+/* -------------------------------------------------------------------------
+ * 메일머지 일괄 생성 (데이터 파일의 각 행마다 문서 하나씩 생성)
+ * 엑셀/CSV 읽기·시트 선택·헤더 행 자동 감지·편집거리 기반 컬럼 자동 매핑은
+ * 탭1(문서 양식 변환기)에서 이미 구현한 readWorkbookSmart/extractHeaders/
+ * refreshSheetSelector/findAutoMatch를 그대로 재사용한다.
+ * ------------------------------------------------------------------------- */
+
+const dropMailMergeData = document.getElementById('dropMailMergeData');
+const fileNameMailMergeData = document.getElementById('fileNameMailMergeData');
+const sheetRowMailMerge = document.getElementById('sheetRowMailMerge');
+const sheetSelectMailMerge = document.getElementById('sheetSelectMailMerge');
+const mailMergeDataStatus = document.getElementById('mailMergeDataStatus');
+const mailMergeMappingTableBody = document.getElementById('mailMergeMappingTableBody');
+const filenameColumnSelect = document.getElementById('filenameColumnSelect');
+
+sheetRowMailMerge.addEventListener('click', (e) => e.stopPropagation());
+
+/** Windows/macOS 파일명에 쓸 수 없는 문자를 "_"로 바꾸고 길이를 적절히 제한 */
+function sanitizeFilename(name) {
+  const cleaned = String(name).trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_');
+  return cleaned.slice(0, 80);
+}
+
+/**
+ * 각 행의 결과 파일명을 미리 계산한다. filenameColumn 값이 비어 있으면
+ * "행N"으로 대체하고, 같은 이름이 여러 번 나오면 "(2)", "(3)"...을 붙여
+ * 서로 다른 파일로 구분한다. 검증 미리보기와 실제 생성에서 동일한 결과가
+ * 나오도록 이 함수 하나만 사용한다.
+ */
+function computeOutputFilenames(rows, filenameColumn, extension) {
+  const usedCount = new Map();
+  return rows.map((row, idx) => {
+    let base = filenameColumn ? sanitizeFilename(row[filenameColumn]) : '';
+    if (!base) base = `행${idx + 1}`;
+    const count = usedCount.get(base) || 0;
+    usedCount.set(base, count + 1);
+    const finalName = count === 0 ? base : `${base}(${count + 1})`;
+    return `${finalName}.${extension}`;
+  });
+}
+
+bindDropzone(dropMailMergeData, fileNameMailMergeData, EXCEL_FILTERS, (p) => {
+  mmDataPath = p;
+  log(`메일머지 데이터 파일 선택됨: ${p}`);
+  mmDataHeaders = [];
+  mmDataRows = [];
+  renderMailMergeMappingTable();
+  mailMergeDataStatus.textContent = '대기 중';
+  mailMergeDataStatus.className = 'pill warn';
+  refreshSheetSelector(p, sheetRowMailMerge, sheetSelectMailMerge, (name) => {
+    mmDataSheetName = name;
+  });
+});
+
+function renderFilenameColumnOptions() {
+  filenameColumnSelect.innerHTML = '<option value="">-- 행 번호 사용 --</option>';
+  mmDataHeaders.forEach((col) => {
+    const opt = document.createElement('option');
+    opt.value = col;
+    opt.textContent = col;
+    filenameColumnSelect.appendChild(opt);
+  });
+  // "이름"/"성명" 류 컬럼이 있으면 파일명 기준으로 기본 선택 (편의 기능)
+  const nameLike = mmDataHeaders.find((h) => /이름|성명|name/i.test(h));
+  mmFilenameColumn = nameLike || '';
+  filenameColumnSelect.value = mmFilenameColumn;
+  filenameColumnSelect.onchange = () => {
+    mmFilenameColumn = filenameColumnSelect.value;
+  };
+}
+
+/** 템플릿 변수 ← 데이터 컬럼 매핑 테이블을 그린다 (탭1의 findAutoMatch로 자동 매핑 제안) */
+function renderMailMergeMappingTable() {
+  mailMergeMappingTableBody.innerHTML = '';
+  mmColumnMapping = {};
+
+  if (templateVars.length === 0 || mmDataHeaders.length === 0) {
+    mailMergeMappingTableBody.innerHTML =
+      '<tr><td colspan="2" class="empty-hint">먼저 [변수 자동 추출]과 [데이터 불러오기]를 실행하세요.</td></tr>';
+    return;
+  }
+
+  const usedColumns = new Set();
+  templateVars.forEach((varName) => {
+    const tr = document.createElement('tr');
+
+    const tdVar = document.createElement('td');
+    tdVar.textContent = `{{${varName}}}`;
+    tr.appendChild(tdVar);
+
+    const tdSelect = document.createElement('td');
+    const select = document.createElement('select');
+    select.dataset.templateVar = varName;
+
+    const emptyOpt = document.createElement('option');
+    emptyOpt.value = '';
+    emptyOpt.textContent = '-- 선택 안함 (빈 값) --';
+    select.appendChild(emptyOpt);
+
+    mmDataHeaders.forEach((col) => {
+      const opt = document.createElement('option');
+      opt.value = col;
+      opt.textContent = col;
+      select.appendChild(opt);
+    });
+
+    const { match: autoMatch, reason } = findAutoMatch(varName, mmDataHeaders, usedColumns);
+    if (autoMatch) {
+      select.value = autoMatch;
+      mmColumnMapping[varName] = autoMatch;
+      usedColumns.add(autoMatch);
+      if (reason === 'fuzzy') {
+        log(`변수 "${varName}"을 이름이 비슷한 데이터 컬럼 "${autoMatch}"에 자동 매핑했습니다. 맞는지 확인하세요.`, 'warn');
+      }
+    } else {
+      mmColumnMapping[varName] = '';
+    }
+
+    select.addEventListener('change', () => {
+      mmColumnMapping[varName] = select.value;
+    });
+
+    tdSelect.appendChild(select);
+    tr.appendChild(tdSelect);
+    mailMergeMappingTableBody.appendChild(tr);
+  });
+}
+
+document.getElementById('btnLoadMailMergeData').addEventListener('click', () => {
+  try {
+    if (!mmDataPath) throw new Error('데이터 파일을 먼저 선택하세요.');
+    if (templateVars.length === 0) throw new Error('먼저 템플릿을 선택하고 [변수 자동 추출]을 실행하세요.');
+
+    log(`메일머지 데이터를 불러옵니다... (시트: ${mmDataSheetName || '첫 번째 시트'})`);
+
+    const result = extractHeaders(mmDataPath, mmDataSheetName);
+    mmDataHeaders = result.headers;
+    mmDataHeaderRowIndex = result.headerRowIndex;
+    if (mmDataHeaderRowIndex > 0) {
+      log(`제목/빈 행으로 보이는 ${mmDataHeaderRowIndex}개 행을 건너뛰고 ${mmDataHeaderRowIndex + 1}행을 헤더로 인식했습니다.`, 'warn');
+    }
+
+    const workbook = readWorkbookSmart(mmDataPath);
+    const sheet = workbook.Sheets[mmDataSheetName || workbook.SheetNames[0]];
+    mmDataRows = XLSX.utils.sheet_to_json(sheet, { defval: '', range: mmDataHeaderRowIndex });
+    if (mmDataRows.length === 0) throw new Error('데이터 파일에 변환할 행이 없습니다.');
+
+    renderMailMergeMappingTable();
+    renderFilenameColumnOptions();
+
+    mailMergeDataStatus.textContent = `${mmDataRows.length}행 불러옴`;
+    mailMergeDataStatus.className = 'pill ok';
+    log(`데이터 ${mmDataRows.length}행, 컬럼 ${mmDataHeaders.length}개를 불러왔습니다.`, 'ok');
+  } catch (err) {
+    mailMergeDataStatus.textContent = '불러오기 실패';
+    mailMergeDataStatus.className = 'pill warn';
+    notifyError('메일머지 데이터를 불러오는 중 오류가 발생했습니다', err);
+  }
+});
+
+/** 템플릿 변수별로 값이 비어 있는 행 수를 집계 (저장 전 검증) */
+function validateBatchRows(rows, templateVarsList, columnMapping) {
+  const missingByVar = {};
+  templateVarsList.forEach((v) => {
+    missingByVar[v] = 0;
+  });
+  rows.forEach((row) => {
+    templateVarsList.forEach((v) => {
+      const col = columnMapping[v];
+      const val = col ? row[col] : '';
+      if (val === '' || val === null || val === undefined) missingByVar[v] += 1;
+    });
+  });
+  return { missingByVar };
+}
+
+// 메일머지 일괄 생성 확인(검증 + 미리보기) 모달
+const mailMergeReviewModal = document.getElementById('mailMergeReviewModal');
+const mailMergeReviewSummary = document.getElementById('mailMergeReviewSummary');
+const mailMergeReviewTableHead = document.getElementById('mailMergeReviewTableHead');
+const mailMergeReviewTableBody = document.getElementById('mailMergeReviewTableBody');
+const mailMergeReviewProceedBtn = document.getElementById('mailMergeReviewProceed');
+const mailMergeReviewCancelBtn = document.getElementById('mailMergeReviewCancel');
+
+const MAILMERGE_PREVIEW_ROW_LIMIT = 5;
+
+/** 일괄 생성 확인 모달을 띄운다. "그대로 생성"(true) / "취소하고 수정"(false)을 Promise로 반환 */
+function showMailMergeReviewModal(templateVarsList, rows, columnMapping, filenames, validation) {
+  return new Promise((resolve) => {
+    const lines = [];
+    lines.push(`<div class="review-line ok">데이터 ${rows.length}행 → 문서 <b>${rows.length}</b>개를 생성합니다.</div>`);
+
+    const missingEntries = Object.entries(validation.missingByVar).filter(([, count]) => count > 0);
+    if (missingEntries.length > 0) {
+      const detail = missingEntries.map(([v, count]) => `"${xmlEscape(v)}" ${count}건`).join(', ');
+      lines.push(`<div class="review-line warn">⚠ 값이 비어 있는 변수: ${detail}</div>`);
+    } else {
+      lines.push(`<div class="review-line ok">✓ 모든 변수에 값이 채워져 있습니다.</div>`);
+    }
+
+    const fallbackCount = rows.filter(
+      (row) => !mmFilenameColumn || !String(row[mmFilenameColumn] || '').trim()
+    ).length;
+    if (fallbackCount > 0) {
+      lines.push(`<div class="review-line warn">⚠ 파일명 기준 컬럼 값이 비어 있어 행 번호로 이름 지어지는 행: ${fallbackCount}건</div>`);
+    }
+
+    mailMergeReviewSummary.innerHTML = lines.join('');
+
+    mailMergeReviewTableHead.innerHTML = ['파일명', ...templateVarsList]
+      .map((h) => `<th>${xmlEscape(h)}</th>`)
+      .join('');
+
+    const previewCount = Math.min(MAILMERGE_PREVIEW_ROW_LIMIT, rows.length);
+    const previewHtml = [];
+    for (let idx = 0; idx < previewCount; idx++) {
+      const row = rows[idx];
+      const cells = [
+        filenames[idx],
+        ...templateVarsList.map((v) => {
+          const col = columnMapping[v];
+          const val = col ? row[col] : '';
+          return val === '' || val === null || val === undefined ? '' : String(val);
+        }),
+      ];
+      previewHtml.push(`<tr>${cells.map((c) => `<td>${xmlEscape(c)}</td>`).join('')}</tr>`);
+    }
+    if (rows.length > previewCount) {
+      previewHtml.push(
+        `<tr><td colspan="${templateVarsList.length + 1}" class="empty-hint">... 외 ${rows.length - previewCount}행</td></tr>`
+      );
+    }
+    mailMergeReviewTableBody.innerHTML = previewHtml.join('');
+
+    mailMergeReviewModal.hidden = false;
+
+    const cleanup = () => {
+      mailMergeReviewModal.hidden = true;
+      mailMergeReviewProceedBtn.onclick = null;
+      mailMergeReviewCancelBtn.onclick = null;
+      mailMergeReviewModal.onclick = null;
+    };
+
+    mailMergeReviewProceedBtn.onclick = () => {
+      cleanup();
+      resolve(true);
+    };
+    mailMergeReviewCancelBtn.onclick = () => {
+      cleanup();
+      resolve(false);
+    };
+    mailMergeReviewModal.onclick = (e) => {
+      if (e.target === mailMergeReviewModal) mailMergeReviewCancelBtn.click();
+    };
+  });
+}
+
+document.getElementById('btnGenerateBatch').addEventListener('click', async () => {
+  try {
+    if (!templatePath) throw new Error('Word/한글(.docx, .hwpx) 템플릿 파일을 먼저 선택하세요.');
+    if (templateVars.length === 0) throw new Error('추출된 변수가 없습니다. 먼저 [변수 자동 추출]을 실행하세요.');
+    if (mmDataRows.length === 0) throw new Error('데이터 파일을 먼저 불러오세요.');
+
+    const format = getTemplateFormat(templatePath);
+    const mappedCount = templateVars.filter((v) => mmColumnMapping[v]).length;
+    if (mappedCount === 0) throw new Error('매핑된 변수가 하나도 없습니다. 컬럼 매핑을 확인하세요.');
+
+    const validation = validateBatchRows(mmDataRows, templateVars, mmColumnMapping);
+    const filenames = computeOutputFilenames(mmDataRows, mmFilenameColumn, format);
+
+    const proceed = await showMailMergeReviewModal(templateVars, mmDataRows, mmColumnMapping, filenames, validation);
+    if (!proceed) {
+      log('사용자가 확인 단계에서 취소했습니다. 매핑을 수정한 뒤 다시 시도하세요.', 'warn');
+      return;
+    }
+
+    const outputDir = await ipcRenderer.invoke('dialog:selectFolder', { title: '결과 파일을 저장할 폴더 선택' });
+    if (!outputDir) {
+      log('저장이 취소되었습니다.', 'warn');
+      return;
+    }
+
+    log(`일괄 생성을 시작합니다... (${mmDataRows.length}건, 형식: ${format.toUpperCase()})`);
+
+    let successCount = 0;
+    const errors = [];
+    mmDataRows.forEach((row, idx) => {
+      try {
+        const data = {};
+        templateVars.forEach((v) => {
+          const col = mmColumnMapping[v];
+          const val = col ? row[col] : '';
+          data[v] = val === null || val === undefined ? '' : String(val);
+        });
+        const outputBuffer = renderMergedDocument(templatePath, format, data);
+        safeWriteFileSync(path.join(outputDir, filenames[idx]), outputBuffer);
+        successCount += 1;
+      } catch (err) {
+        errors.push({ row: idx + 1, message: friendlyErrorMessage(err) });
+      }
+    });
+
+    const resultLevel = errors.length > 0 ? 'warn' : 'ok';
+    log(
+      `일괄 생성 완료: 총 ${mmDataRows.length}건 중 ${successCount}건 성공${errors.length > 0 ? `, ${errors.length}건 실패` : ''}.`,
+      resultLevel
+    );
+    errors.slice(0, 5).forEach((e) => log(`  - ${e.row}행 실패: ${e.message}`, 'warn'));
+    if (errors.length > 5) log(`  ... 외 ${errors.length - 5}건 실패`, 'warn');
+
+    if (errors.length === 0) {
+      alert(`✅ 총 ${successCount}개의 문서를 생성했습니다.\n저장 위치: ${outputDir}`);
+    } else {
+      alert(`⚠️ ${successCount}개 생성 완료, ${errors.length}건 실패했습니다.\n자세한 내용은 로그를 확인하세요.\n저장 위치: ${outputDir}`);
+    }
+  } catch (err) {
+    notifyError('일괄 생성 중 오류가 발생했습니다', err);
+  }
+});
+
 document.getElementById('btnExtractVars').addEventListener('click', () => {
   try {
     if (!templatePath) {
@@ -1446,6 +1852,7 @@ document.getElementById('btnExtractVars').addEventListener('click', () => {
     }
 
     renderVarForm();
+    renderMailMergeMappingTable();
   } catch (err) {
     extractStatus.textContent = '추출 실패';
     extractStatus.className = 'pill warn';
@@ -1476,29 +1883,7 @@ document.getElementById('btnGenerateDocx').addEventListener('click', async () =>
 
     log(`메일머지 문서 생성을 시작합니다... (형식: ${format.toUpperCase()})`);
 
-    let outputBuffer;
-    if (format === 'hwpx') {
-      outputBuffer = renderHwpxDocument(templatePath, data);
-    } else {
-      const content = safeReadFileSync(templatePath, 'binary');
-      const zip = new PizZip(content);
-
-      const doc = new Docxtemplater(zip, {
-        paragraphLoop: true,
-        linebreaks: true,
-        delimiters: { start: '{{', end: '}}' },
-      });
-
-      try {
-        doc.render(data);
-      } catch (renderErr) {
-        const details = (renderErr.properties && renderErr.properties.errors) || [];
-        const detailMsg = details.map((e) => e.properties && e.properties.explanation).filter(Boolean).join('\n');
-        throw new Error(detailMsg || renderErr.message || '템플릿 렌더링 중 오류가 발생했습니다.');
-      }
-
-      outputBuffer = doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
-    }
+    const outputBuffer = renderMergedDocument(templatePath, format, data);
 
     const baseName = path.basename(templatePath, path.extname(templatePath));
     const savePath = await ipcRenderer.invoke('dialog:saveFile', {

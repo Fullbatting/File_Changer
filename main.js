@@ -90,3 +90,21 @@ ipcMain.handle('dialog:saveFile', async (event, args = {}) => {
  * Windows: %APPDATA%/doc-convert-mailmerge, macOS: ~/Library/Application Support/doc-convert-mailmerge
  */
 ipcMain.handle('app:getUserDataPath', () => app.getPath('userData'));
+
+/**
+ * 폴더 선택 다이얼로그 (메일머지 일괄 생성 결과를 저장할 폴더 선택용)
+ * args: { title, defaultPath }
+ * 반환: 선택된 폴더 경로 (취소 시 null)
+ */
+ipcMain.handle('dialog:selectFolder', async (event, args = {}) => {
+  const { title = '폴더 선택', defaultPath = '' } = args;
+
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title,
+    defaultPath,
+    properties: ['openDirectory', 'createDirectory'],
+  });
+
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});

@@ -295,6 +295,41 @@ table.mapping-table select {
   padding: 14px 4px;
 }
 
+/* ---------- 모드 토글 (메일머지: 직접 입력 / 일괄 생성) ---------- */
+.mode-toggle {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mode-toggle label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: #fff;
+  transition: all 0.15s ease;
+}
+
+.mode-toggle label:hover {
+  border-color: var(--color-primary);
+}
+
+.mode-toggle input[type="radio"] {
+  accent-color: var(--color-primary);
+}
+
+.mode-toggle label:has(input[type="radio"]:checked) {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+}
+
 /* ---------- 프리셋 관리 ---------- */
 .preset-row {
   display: flex;
