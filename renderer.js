@@ -141,6 +141,38 @@ function evictOldestIfFull(map, limit) {
 }
 
 /**
+ * "진행 / 취소" 형태의 확인 모달 공통 열기/닫기 로직. 모달을 보이고, 진행·취소
+ * 버튼 클릭 또는 배경(오버레이) 클릭(취소로 처리)에 따라 true/false를 Promise로
+ * 반환한다. 탭1의 변환 결과 확인 모달과 탭2의 일괄 생성 확인 모달이 이 구조를
+ * 그대로 공유하므로 여기만 한 번 구현한다 — 모달에 채울 내용(요약/미리보기
+ * 테이블)을 만드는 로직은 서로 달라 호출하는 쪽에 남겨둔다.
+ */
+function confirmModal(modalEl, proceedBtn, cancelBtn) {
+  return new Promise((resolve) => {
+    modalEl.hidden = false;
+
+    const cleanup = () => {
+      modalEl.hidden = true;
+      proceedBtn.onclick = null;
+      cancelBtn.onclick = null;
+      modalEl.onclick = null;
+    };
+
+    proceedBtn.onclick = () => {
+      cleanup();
+      resolve(true);
+    };
+    cancelBtn.onclick = () => {
+      cleanup();
+      resolve(false);
+    };
+    modalEl.onclick = (e) => {
+      if (e.target === modalEl) cancelBtn.click();
+    };
+  });
+}
+
+/**
  * 워크북 파싱 캐시. 같은 파일을 (시트 목록 조회 → 구조 분석 → 변환 실행) 단계마다
  * 매번 디스크에서 다시 읽고 다시 파싱하는 중복을 없애기 위함. 파일의 mtime이
  * 바뀌면(사용자가 외부에서 파일을 다시 저장한 경우) 자동으로 무효화된다.
@@ -295,7 +327,15 @@ const presetSelect = document.getElementById('presetSelect');
 });
 
 /** 파일이 선택되면 시트 목록을 읽어 시트 선택 드롭다운을 갱신한다 */
-function refreshSheetSelector(filePath, sheetRowEl, sheetSelectEl, onChange) {
+/**
+ * 파일 선택 직후의 최초 시트 반영은 onChange로, 사용자가 드롭다운에서 직접
+ * 시트를 바꿀 때의 후속 처리(상태 초기화 등)는 onUserChangedSheet으로 분리
+ * 되어 있다. 탭1(A/B 파일)과 탭2(메일머지 데이터 파일)가 이 함수를 공유하므로,
+ * "시트를 바꾸면 무엇을 초기화할지"는 호출하는 쪽의 책임으로 둬야 한다 —
+ * 그렇지 않으면 탭2에서 시트를 바꿨는데 탭1의 매핑/프리셋이 초기화되는 식의
+ * 엉뚱한 부작용이 생긴다.
+ */
+function refreshSheetSelector(filePath, sheetRowEl, sheetSelectEl, onChange, onUserChangedSheet) {
   try {
     const workbook = readWorkbookSmart(filePath);
     const sheetNames = workbook.SheetNames || [];
@@ -319,8 +359,7 @@ function refreshSheetSelector(filePath, sheetRowEl, sheetSelectEl, onChange) {
 
     sheetSelectEl.onchange = () => {
       onChange(sheetSelectEl.value);
-      resetAnalysisState();
-      log(`시트가 "${sheetSelectEl.value}"(으)로 변경되었습니다. [구조 분석]을 다시 실행하세요.`, 'warn');
+      if (onUserChangedSheet) onUserChangedSheet(sheetSelectEl.value);
     };
   } catch (err) {
     sheetRowEl.hidden = true;
@@ -343,22 +382,40 @@ function resetAnalysisState() {
   analyzeStatus.className = 'pill warn';
 }
 
+/** 탭1 A/B 시트를 사용자가 직접 바꿨을 때: 분석 결과가 새 시트와 어긋나지 않도록 초기화 */
+function onTab1SheetChanged(name) {
+  resetAnalysisState();
+  log(`시트가 "${name}"(으)로 변경되었습니다. [구조 분석]을 다시 실행하세요.`, 'warn');
+}
+
 bindDropzone(dropA, fileNameA, EXCEL_FILTERS, (p) => {
   fileAPath = p;
   log(`원본(A) 파일 선택됨: ${p}`);
   resetAnalysisState();
-  refreshSheetSelector(p, sheetRowA, sheetSelectA, (name) => {
-    sheetAName = name;
-  });
+  refreshSheetSelector(
+    p,
+    sheetRowA,
+    sheetSelectA,
+    (name) => {
+      sheetAName = name;
+    },
+    onTab1SheetChanged
+  );
 });
 
 bindDropzone(dropB, fileNameB, EXCEL_FILTERS, (p) => {
   fileBPath = p;
   log(`타겟(B) 파일 선택됨: ${p}`);
   resetAnalysisState();
-  refreshSheetSelector(p, sheetRowB, sheetSelectB, (name) => {
-    sheetBName = name;
-  });
+  refreshSheetSelector(
+    p,
+    sheetRowB,
+    sheetSelectB,
+    (name) => {
+      sheetBName = name;
+    },
+    onTab1SheetChanged
+  );
 });
 
 /**
@@ -955,64 +1012,41 @@ const CONVERT_PREVIEW_ROW_LIMIT = 5;
  * "그대로 저장"(true) / "취소하고 수정"(false)을 Promise로 반환한다.
  */
 function showConvertReviewModal(headersB, convertedRows, validation) {
-  return new Promise((resolve) => {
-    const lines = [];
-    lines.push(`<div class="review-line ok">총 <b>${convertedRows.length}</b>행이 변환되었습니다.</div>`);
+  const lines = [];
+  lines.push(`<div class="review-line ok">총 <b>${convertedRows.length}</b>행이 변환되었습니다.</div>`);
 
-    const missingEntries = Object.entries(validation.missingByColumn).filter(([, count]) => count > 0);
-    if (missingEntries.length > 0) {
-      const detail = missingEntries.map(([col, count]) => `"${xmlEscape(col)}" ${count}건`).join(', ');
-      lines.push(`<div class="review-line warn">⚠ 필수 컬럼 값이 비어 있는 행: ${detail}</div>`);
-    } else if (Object.keys(validation.missingByColumn).length > 0) {
-      lines.push(`<div class="review-line ok">✓ 필수 컬럼에 빈 값이 없습니다.</div>`);
-    }
+  const missingEntries = Object.entries(validation.missingByColumn).filter(([, count]) => count > 0);
+  if (missingEntries.length > 0) {
+    const detail = missingEntries.map(([col, count]) => `"${xmlEscape(col)}" ${count}건`).join(', ');
+    lines.push(`<div class="review-line warn">⚠ 필수 컬럼 값이 비어 있는 행: ${detail}</div>`);
+  } else if (Object.keys(validation.missingByColumn).length > 0) {
+    lines.push(`<div class="review-line ok">✓ 필수 컬럼에 빈 값이 없습니다.</div>`);
+  }
 
-    if (validation.duplicateCount > 0) {
-      const examples = validation.duplicateExamples
-        .map((e) => `${e.row}행(${e.duplicateOf}행과 동일)`)
-        .join(', ');
-      lines.push(`<div class="review-line warn">⚠ 모든 컬럼 값이 동일한 중복 행 ${validation.duplicateCount}건: ${examples}${validation.duplicateCount > validation.duplicateExamples.length ? ' 등' : ''}</div>`);
-    } else {
-      lines.push(`<div class="review-line ok">✓ 완전히 중복된 행이 없습니다.</div>`);
-    }
+  if (validation.duplicateCount > 0) {
+    const examples = validation.duplicateExamples.map((e) => `${e.row}행(${e.duplicateOf}행과 동일)`).join(', ');
+    lines.push(`<div class="review-line warn">⚠ 모든 컬럼 값이 동일한 중복 행 ${validation.duplicateCount}건: ${examples}${validation.duplicateCount > validation.duplicateExamples.length ? ' 등' : ''}</div>`);
+  } else {
+    lines.push(`<div class="review-line ok">✓ 완전히 중복된 행이 없습니다.</div>`);
+  }
 
-    convertReviewSummary.innerHTML = lines.join('');
+  convertReviewSummary.innerHTML = lines.join('');
 
-    convertReviewTableHead.innerHTML = headersB.map((h) => `<th>${xmlEscape(h)}</th>`).join('');
-    const previewRows = convertedRows.slice(0, CONVERT_PREVIEW_ROW_LIMIT);
-    convertReviewTableBody.innerHTML = previewRows
-      .map(
-        (row) =>
-          `<tr>${headersB
-            .map((h) => `<td>${row[h] === '' || row[h] === null || row[h] === undefined ? '' : xmlEscape(String(row[h]))}</td>`)
-            .join('')}</tr>`
-      )
-      .join('');
-    if (convertedRows.length > previewRows.length) {
-      convertReviewTableBody.innerHTML += `<tr><td colspan="${headersB.length}" class="empty-hint">... 외 ${convertedRows.length - previewRows.length}행</td></tr>`;
-    }
+  convertReviewTableHead.innerHTML = headersB.map((h) => `<th>${xmlEscape(h)}</th>`).join('');
+  const previewRows = convertedRows.slice(0, CONVERT_PREVIEW_ROW_LIMIT);
+  convertReviewTableBody.innerHTML = previewRows
+    .map(
+      (row) =>
+        `<tr>${headersB
+          .map((h) => `<td>${row[h] === '' || row[h] === null || row[h] === undefined ? '' : xmlEscape(String(row[h]))}</td>`)
+          .join('')}</tr>`
+    )
+    .join('');
+  if (convertedRows.length > previewRows.length) {
+    convertReviewTableBody.innerHTML += `<tr><td colspan="${headersB.length}" class="empty-hint">... 외 ${convertedRows.length - previewRows.length}행</td></tr>`;
+  }
 
-    convertReviewModal.hidden = false;
-
-    const cleanup = () => {
-      convertReviewModal.hidden = true;
-      convertReviewProceedBtn.onclick = null;
-      convertReviewCancelBtn.onclick = null;
-      convertReviewModal.onclick = null;
-    };
-
-    convertReviewProceedBtn.onclick = () => {
-      cleanup();
-      resolve(true);
-    };
-    convertReviewCancelBtn.onclick = () => {
-      cleanup();
-      resolve(false);
-    };
-    convertReviewModal.onclick = (e) => {
-      if (e.target === convertReviewModal) convertReviewCancelBtn.click();
-    };
-  });
+  return confirmModal(convertReviewModal, convertReviewProceedBtn, convertReviewCancelBtn);
 }
 
 /**
@@ -1536,6 +1570,24 @@ function sanitizeFilename(name) {
 }
 
 /**
+ * 템플릿 변수에 채울 데이터 값을 문자열로 바꾼다. 날짜 서식의 엑셀 셀은
+ * readWorkbookSmart가 cellDates:true로 읽어 JS Date 객체가 되는데, 그냥
+ * String()으로 바꾸면 "Thu Jan 01 2026 00:00:00 GMT+0900..." 같은 장문이
+ * 문서에 그대로 들어가 버린다. 시/분/초가 전부 0인(순수 날짜) 값은
+ * "YYYY-MM-DD"로, 그 외에는 "YYYY-MM-DD HH:MM:SS"로 사람이 읽기 쉽게 표기한다.
+ */
+function formatMailMergeValue(val) {
+  if (val === '' || val === null || val === undefined) return '';
+  if (val instanceof Date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    const datePart = `${val.getFullYear()}-${pad(val.getMonth() + 1)}-${pad(val.getDate())}`;
+    const hasTime = val.getHours() !== 0 || val.getMinutes() !== 0 || val.getSeconds() !== 0;
+    return hasTime ? `${datePart} ${pad(val.getHours())}:${pad(val.getMinutes())}:${pad(val.getSeconds())}` : datePart;
+  }
+  return String(val);
+}
+
+/**
  * 각 행의 결과 파일명을 미리 계산한다. filenameColumn 값이 비어 있으면
  * "행N"으로 대체하고, 같은 이름이 여러 번 나오면 "(2)", "(3)"...을 붙여
  * 서로 다른 파일로 구분한다. 검증 미리보기와 실제 생성에서 동일한 결과가
@@ -1553,17 +1605,31 @@ function computeOutputFilenames(rows, filenameColumn, extension) {
   });
 }
 
-bindDropzone(dropMailMergeData, fileNameMailMergeData, EXCEL_FILTERS, (p) => {
-  mmDataPath = p;
-  log(`메일머지 데이터 파일 선택됨: ${p}`);
+/** 데이터 파일/시트가 (재)선택되면 이전에 불러온 행·매핑이 새 시트와 어긋나지 않도록 초기화 */
+function resetMailMergeDataState() {
   mmDataHeaders = [];
   mmDataRows = [];
   renderMailMergeMappingTable();
   mailMergeDataStatus.textContent = '대기 중';
   mailMergeDataStatus.className = 'pill warn';
-  refreshSheetSelector(p, sheetRowMailMerge, sheetSelectMailMerge, (name) => {
-    mmDataSheetName = name;
-  });
+}
+
+bindDropzone(dropMailMergeData, fileNameMailMergeData, EXCEL_FILTERS, (p) => {
+  mmDataPath = p;
+  log(`메일머지 데이터 파일 선택됨: ${p}`);
+  resetMailMergeDataState();
+  refreshSheetSelector(
+    p,
+    sheetRowMailMerge,
+    sheetSelectMailMerge,
+    (name) => {
+      mmDataSheetName = name;
+    },
+    (name) => {
+      resetMailMergeDataState();
+      log(`시트가 "${name}"(으)로 변경되었습니다. [데이터 불러오기]를 다시 실행하세요.`, 'warn');
+    }
+  );
 });
 
 function renderFilenameColumnOptions() {
@@ -1700,76 +1766,49 @@ const MAILMERGE_PREVIEW_ROW_LIMIT = 5;
 
 /** 일괄 생성 확인 모달을 띄운다. "그대로 생성"(true) / "취소하고 수정"(false)을 Promise로 반환 */
 function showMailMergeReviewModal(templateVarsList, rows, columnMapping, filenames, validation) {
-  return new Promise((resolve) => {
-    const lines = [];
-    lines.push(`<div class="review-line ok">데이터 ${rows.length}행 → 문서 <b>${rows.length}</b>개를 생성합니다.</div>`);
+  const lines = [];
+  lines.push(`<div class="review-line ok">데이터 ${rows.length}행 → 문서 <b>${rows.length}</b>개를 생성합니다.</div>`);
 
-    const missingEntries = Object.entries(validation.missingByVar).filter(([, count]) => count > 0);
-    if (missingEntries.length > 0) {
-      const detail = missingEntries.map(([v, count]) => `"${xmlEscape(v)}" ${count}건`).join(', ');
-      lines.push(`<div class="review-line warn">⚠ 값이 비어 있는 변수: ${detail}</div>`);
-    } else {
-      lines.push(`<div class="review-line ok">✓ 모든 변수에 값이 채워져 있습니다.</div>`);
-    }
+  const missingEntries = Object.entries(validation.missingByVar).filter(([, count]) => count > 0);
+  if (missingEntries.length > 0) {
+    const detail = missingEntries.map(([v, count]) => `"${xmlEscape(v)}" ${count}건`).join(', ');
+    lines.push(`<div class="review-line warn">⚠ 값이 비어 있는 변수: ${detail}</div>`);
+  } else {
+    lines.push(`<div class="review-line ok">✓ 모든 변수에 값이 채워져 있습니다.</div>`);
+  }
 
-    const fallbackCount = rows.filter(
-      (row) => !mmFilenameColumn || !String(row[mmFilenameColumn] || '').trim()
-    ).length;
-    if (fallbackCount > 0) {
-      lines.push(`<div class="review-line warn">⚠ 파일명 기준 컬럼 값이 비어 있어 행 번호로 이름 지어지는 행: ${fallbackCount}건</div>`);
-    }
+  const fallbackCount = rows.filter((row) => !mmFilenameColumn || !String(row[mmFilenameColumn] || '').trim()).length;
+  if (fallbackCount > 0) {
+    lines.push(`<div class="review-line warn">⚠ 파일명 기준 컬럼 값이 비어 있어 행 번호로 이름 지어지는 행: ${fallbackCount}건</div>`);
+  }
 
-    mailMergeReviewSummary.innerHTML = lines.join('');
+  mailMergeReviewSummary.innerHTML = lines.join('');
 
-    mailMergeReviewTableHead.innerHTML = ['파일명', ...templateVarsList]
-      .map((h) => `<th>${xmlEscape(h)}</th>`)
-      .join('');
+  mailMergeReviewTableHead.innerHTML = ['파일명', ...templateVarsList].map((h) => `<th>${xmlEscape(h)}</th>`).join('');
 
-    const previewCount = Math.min(MAILMERGE_PREVIEW_ROW_LIMIT, rows.length);
-    const previewHtml = [];
-    for (let idx = 0; idx < previewCount; idx++) {
-      const row = rows[idx];
-      const cells = [
-        filenames[idx],
-        ...templateVarsList.map((v) => {
-          const col = columnMapping[v];
-          const val = col ? row[col] : '';
-          return val === '' || val === null || val === undefined ? '' : String(val);
-        }),
-      ];
-      previewHtml.push(`<tr>${cells.map((c) => `<td>${xmlEscape(c)}</td>`).join('')}</tr>`);
-    }
-    if (rows.length > previewCount) {
-      previewHtml.push(
-        `<tr><td colspan="${templateVarsList.length + 1}" class="empty-hint">... 외 ${rows.length - previewCount}행</td></tr>`
-      );
-    }
-    mailMergeReviewTableBody.innerHTML = previewHtml.join('');
+  const previewCount = Math.min(MAILMERGE_PREVIEW_ROW_LIMIT, rows.length);
+  const previewHtml = [];
+  for (let idx = 0; idx < previewCount; idx++) {
+    const row = rows[idx];
+    const cells = [
+      filenames[idx],
+      ...templateVarsList.map((v) => {
+        const col = columnMapping[v];
+        const val = col ? row[col] : '';
+        return formatMailMergeValue(val);
+      }),
+    ];
+    previewHtml.push(`<tr>${cells.map((c) => `<td>${xmlEscape(c)}</td>`).join('')}</tr>`);
+  }
+  if (rows.length > previewCount) {
+    previewHtml.push(`<tr><td colspan="${templateVarsList.length + 1}" class="empty-hint">... 외 ${rows.length - previewCount}행</td></tr>`);
+  }
+  mailMergeReviewTableBody.innerHTML = previewHtml.join('');
 
-    mailMergeReviewModal.hidden = false;
-
-    const cleanup = () => {
-      mailMergeReviewModal.hidden = true;
-      mailMergeReviewProceedBtn.onclick = null;
-      mailMergeReviewCancelBtn.onclick = null;
-      mailMergeReviewModal.onclick = null;
-    };
-
-    mailMergeReviewProceedBtn.onclick = () => {
-      cleanup();
-      resolve(true);
-    };
-    mailMergeReviewCancelBtn.onclick = () => {
-      cleanup();
-      resolve(false);
-    };
-    mailMergeReviewModal.onclick = (e) => {
-      if (e.target === mailMergeReviewModal) mailMergeReviewCancelBtn.click();
-    };
-  });
+  return confirmModal(mailMergeReviewModal, mailMergeReviewProceedBtn, mailMergeReviewCancelBtn);
 }
 
-document.getElementById('btnGenerateBatch').addEventListener('click', async () => {
+btnGenerateBatchEl.addEventListener('click', async () => {
   try {
     if (!templatePath) throw new Error('Word/한글(.docx, .hwpx) 템플릿 파일을 먼저 선택하세요.');
     if (templateVars.length === 0) throw new Error('추출된 변수가 없습니다. 먼저 [변수 자동 추출]을 실행하세요.');
@@ -1796,15 +1835,21 @@ document.getElementById('btnGenerateBatch').addEventListener('click', async () =
 
     log(`일괄 생성을 시작합니다... (${mmDataRows.length}건, 형식: ${format.toUpperCase()})`);
 
+    // 수백~수천 행을 한 번에 생성할 때 렌더러(UI) 스레드가 완전히 멈춰 보이지
+    // 않도록, 일정 행마다 이벤트 루프에 제어를 한 번씩 양보한다.
+    const YIELD_EVERY = 20;
+    const PROGRESS_LOG_EVERY = 100;
+
     let successCount = 0;
     const errors = [];
-    mmDataRows.forEach((row, idx) => {
+    for (let idx = 0; idx < mmDataRows.length; idx++) {
+      const row = mmDataRows[idx];
       try {
         const data = {};
         templateVars.forEach((v) => {
           const col = mmColumnMapping[v];
           const val = col ? row[col] : '';
-          data[v] = val === null || val === undefined ? '' : String(val);
+          data[v] = formatMailMergeValue(val);
         });
         const outputBuffer = renderMergedDocument(templatePath, format, data);
         safeWriteFileSync(path.join(outputDir, filenames[idx]), outputBuffer);
@@ -1812,7 +1857,15 @@ document.getElementById('btnGenerateBatch').addEventListener('click', async () =
       } catch (err) {
         errors.push({ row: idx + 1, message: friendlyErrorMessage(err) });
       }
-    });
+
+      const done = idx + 1;
+      if (done % PROGRESS_LOG_EVERY === 0 && done < mmDataRows.length) {
+        log(`진행 중... (${done}/${mmDataRows.length})`);
+      }
+      if (done % YIELD_EVERY === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
 
     const resultLevel = errors.length > 0 ? 'warn' : 'ok';
     log(
@@ -1860,7 +1913,7 @@ document.getElementById('btnExtractVars').addEventListener('click', () => {
   }
 });
 
-document.getElementById('btnGenerateDocx').addEventListener('click', async () => {
+btnGenerateDocxEl.addEventListener('click', async () => {
   try {
     if (!templatePath) {
       throw new Error('Word/한글(.docx, .hwpx) 템플릿 파일을 먼저 선택하세요.');
