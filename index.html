@@ -86,6 +86,7 @@
         <div class="btn-row">
           <button id="btnSaveMapping" class="btn ghost">💾 매핑 규칙 파일로 내보내기 (.json)</button>
           <button id="btnLoadMapping" class="btn ghost">📂 매핑 규칙 파일 불러오기 (.json)</button>
+          <button id="btnManageSynonymsTab1" class="btn ghost">📖 동의어 사전 관리</button>
         </div>
       </div>
 
@@ -175,6 +176,10 @@
           </select>
         </div>
         <p class="desc" style="margin-top:6px;">선택한 컬럼의 값으로 각 결과 파일 이름을 짓습니다 (예: "홍길동.docx"). 비워두면 행 번호로 이름 짓습니다.</p>
+
+        <div class="btn-row">
+          <button id="btnManageSynonymsTab2" class="btn ghost">📖 동의어 사전 관리</button>
+        </div>
       </div>
 
       <div class="card">
@@ -243,6 +248,21 @@
       <div class="btn-row modal-btn-row">
         <button id="mailMergeReviewCancel" class="btn ghost">취소하고 수정</button>
         <button id="mailMergeReviewProceed" class="btn primary">그대로 생성</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 동의어 사전 관리 모달 -->
+  <div id="synonymManagerModal" class="modal-overlay" hidden>
+    <div class="modal-card modal-card-wide">
+      <h3>동의어 사전 관리</h3>
+      <p class="desc">한 줄에 같은 의미의 이름들을 쉼표(,)로 구분해 적으세요. 컬럼/변수 자동 매핑 시 이름이 완전히 같지 않아도 같은 줄에 있으면 자동으로 연결합니다 (예: "이름, 성명, 성함").</p>
+      <textarea id="synonymGroupsTextarea" class="synonym-textarea" spellcheck="false"></textarea>
+      <p id="synonymManagerError" class="modal-error" hidden></p>
+      <div class="btn-row modal-btn-row">
+        <button id="synonymManagerReset" class="btn ghost" style="margin-right:auto;">기본값으로 초기화</button>
+        <button id="synonymManagerCancel" class="btn ghost">취소</button>
+        <button id="synonymManagerSave" class="btn primary">저장</button>
       </div>
     </div>
   </div>

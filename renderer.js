@@ -500,25 +500,47 @@ function levenshteinDistance(a, b) {
 const FUZZY_MAX_DISTANCE = 2; // 절대 편집거리 상한
 const FUZZY_MAX_RATIO = 0.34; // 상대 편집거리 상한(짧은 이름에서 과매칭 방지)
 
+/** 문자열 비교용 정규화(공백 제거 + 소문자 변환). 자동 매핑/동의어 사전에서 공통으로 사용 */
+function normalizeFieldName(s) {
+  return String(s).replace(/\s+/g, '').toLowerCase();
+}
+
 /**
  * headersA 중 bCol과 가장 비슷한 컬럼을 찾는다.
- * 1순위: 공백 제거 + 소문자 변환 후 완전히 같은 이름("exact").
- * 2순위: 편집거리가 절대/상대 기준 모두를 만족하면서 유일하게 가장 가까운
- *   후보가 있을 때만 "fuzzy"로 매칭한다. 후보가 여러 개 동률이면 모호하므로
- *   매칭하지 않는다 — 잘못 자동 매핑되어 데이터가 다른 컬럼에 들어가는 것이
- *   매핑이 안 되는 것보다 더 나쁘다.
- * usedHeadersA에 담긴 컬럼은 이미 다른 B 컬럼에 매칭되었으므로 후보에서 제외해
- * 하나의 A 컬럼이 여러 B 컬럼에 중복 자동매핑되지 않도록 한다.
+ * 1순위: 정규화 후 완전히 같은 이름("exact").
+ * 2순위: 사용자가 관리하는 동의어 사전에 bCol과 같은 그룹으로 등록된 이름이
+ *   headersA에 유일하게 하나 있을 때만 "synonym"으로 매칭한다(예: "성명"↔"이름").
+ *   후보가 여러 개면 모호하므로 매칭하지 않고, 0개면 사전에 없는 것일 뿐이니
+ *   다음 단계(퍼지)를 계속 시도한다.
+ * 3순위: 편집거리가 절대/상대 기준 모두를 만족하면서 유일하게 가장 가까운
+ *   후보가 있을 때만 "fuzzy"로 매칭한다.
+ * 모든 단계에서 후보가 여러 개 동률이면 모호하므로 매칭하지 않는다 — 잘못
+ * 자동 매핑되어 데이터가 다른 컬럼에 들어가는 것이 매핑이 안 되는 것보다
+ * 더 나쁘다. usedHeadersA에 담긴 컬럼은 이미 다른 B 컬럼에 매칭되었으므로
+ * 후보에서 제외해 하나의 A 컬럼이 여러 B 컬럼에 중복 자동매핑되지 않도록 한다.
  */
 function findAutoMatch(bCol, headersA, usedHeadersA) {
-  const normalize = (s) => s.replace(/\s+/g, '').toLowerCase();
+  const normalize = normalizeFieldName;
   const bNorm = normalize(bCol);
+  const available = headersA.filter((a) => !usedHeadersA.has(a));
 
-  const exact = headersA.find((a) => !usedHeadersA.has(a) && normalize(a) === bNorm);
+  const exact = available.find((a) => normalize(a) === bNorm);
   if (exact) return { match: exact, reason: 'exact' };
 
-  const candidates = headersA
-    .filter((a) => !usedHeadersA.has(a))
+  const group = synonymGroups.find((g) => g.some((term) => normalize(term) === bNorm));
+  if (group) {
+    const groupNormSet = new Set(group.map(normalize));
+    const synonymCandidates = available.filter((a) => groupNormSet.has(normalize(a)));
+    if (synonymCandidates.length === 1) {
+      return { match: synonymCandidates[0], reason: 'synonym' };
+    }
+    if (synonymCandidates.length > 1) {
+      return { match: null, reason: null }; // 동의어 사전상으로도 모호함
+    }
+    // 0건이면 이 사전 그룹에 해당하는 이름이 데이터에 없는 것뿐이므로 퍼지 매칭을 계속 시도
+  }
+
+  const candidates = available
     .map((a) => {
       const aNorm = normalize(a);
       const dist = levenshteinDistance(aNorm, bNorm);
@@ -569,13 +591,15 @@ function renderMappingTable() {
       select.appendChild(opt);
     });
 
-    // 이름이 동일하거나(완전 일치) 비슷하면(편집거리 기반 퍼지 매칭) 자동 매핑
+    // 이름이 동일(완전 일치)/동의어 사전에 등록됨/편집거리상 비슷함 중 하나면 자동 매핑
     const { match: autoMatch, reason } = findAutoMatch(bCol, headersA, usedHeadersA);
     if (autoMatch) {
       select.value = autoMatch;
       mapping[bCol] = autoMatch;
       usedHeadersA.add(autoMatch);
-      if (reason === 'fuzzy') {
+      if (reason === 'synonym') {
+        log(`"${bCol}" 컬럼을 동의어 사전에 따라 "${autoMatch}" 컬럼에 자동 매핑했습니다.`);
+      } else if (reason === 'fuzzy') {
         log(`"${bCol}" 컬럼을 이름이 비슷한 "${autoMatch}" 컬럼에 자동 매핑했습니다. 맞는지 확인하세요.`, 'warn');
       }
     } else {
@@ -723,6 +747,118 @@ document.getElementById('btnLoadMapping').addEventListener('click', async () => 
   } catch (err) {
     notifyError('매핑 규칙 불러오기 중 오류가 발생했습니다', err);
   }
+});
+
+/* -------------------------------------------------------------------------
+ * 동의어 사전 (자동 매핑 2단계에서 사용, 사용자가 직접 추가/수정 가능)
+ * "성명"↔"이름"처럼 표기는 다르지만 같은 의미인 컬럼명을, AI 모델 없이도
+ * 가장 흔한 사례만큼은 바로 매핑하기 위한 가벼운 대안. 프리셋과 마찬가지로
+ * 사용자 데이터 폴더에 저장되어 앱을 다시 실행해도 유지되며, 모달에서
+ * "한 줄 = 동의어 한 그룹(쉼표로 구분)" 형태로 직접 편집할 수 있다.
+ * ------------------------------------------------------------------------- */
+
+const SYNONYM_GROUPS_FILE_NAME = 'synonym-groups.json';
+
+const DEFAULT_SYNONYM_GROUPS = [
+  ['이름', '성명', '성함'],
+  ['생년월일', '출생일자', '생일'],
+  ['전화번호', '연락처', '핸드폰번호', '휴대폰번호', '휴대전화'],
+  ['이메일', '이메일주소', '메일주소', '전자우편'],
+  ['주소', '소재지', '거주지', '주소지'],
+  ['부서', '소속', '소속부서', '부서명'],
+  ['직급', '직책', '직위'],
+  ['나이', '연령'],
+  ['회사명', '업체명', '상호', '회사'],
+  ['담당자', '담당자명', '책임자'],
+  ['성별', 'sex', 'gender'],
+  ['비고', '메모', '참고사항'],
+];
+
+let synonymGroups = [];
+
+function getSynonymGroupsFilePath() {
+  return path.join(userDataPath, SYNONYM_GROUPS_FILE_NAME);
+}
+
+function loadSynonymGroupsFromDisk() {
+  try {
+    if (!fs.existsSync(getSynonymGroupsFilePath())) {
+      synonymGroups = DEFAULT_SYNONYM_GROUPS.map((g) => [...g]);
+      saveSynonymGroupsToDisk();
+      return;
+    }
+    const raw = safeReadFileSync(getSynonymGroupsFilePath(), 'utf-8');
+    const parsed = JSON.parse(raw);
+    synonymGroups = Array.isArray(parsed)
+      ? parsed.filter((g) => Array.isArray(g) && g.length >= 2)
+      : DEFAULT_SYNONYM_GROUPS.map((g) => [...g]);
+  } catch (err) {
+    synonymGroups = DEFAULT_SYNONYM_GROUPS.map((g) => [...g]);
+    log(`동의어 사전을 불러오는 중 오류가 발생하여 기본값으로 되돌립니다: ${friendlyErrorMessage(err)}`, 'warn');
+  }
+}
+
+function saveSynonymGroupsToDisk() {
+  safeWriteFileSync(getSynonymGroupsFilePath(), JSON.stringify(synonymGroups, null, 2));
+}
+
+/** 동의어 그룹 배열 ↔ "한 줄 = 한 그룹(쉼표 구분)" 텍스트 상호 변환 */
+function synonymGroupsToText(groups) {
+  return groups.map((g) => g.join(', ')).join('\n');
+}
+function textToSynonymGroups(text) {
+  return text
+    .split('\n')
+    .map((line) =>
+      line
+        .split(',')
+        .map((term) => term.trim())
+        .filter((term) => term !== '')
+    )
+    .filter((group) => group.length >= 2);
+}
+
+// 동의어 사전 관리 모달
+const synonymManagerModal = document.getElementById('synonymManagerModal');
+const synonymGroupsTextarea = document.getElementById('synonymGroupsTextarea');
+const synonymManagerError = document.getElementById('synonymManagerError');
+const synonymManagerSaveBtn = document.getElementById('synonymManagerSave');
+const synonymManagerCancelBtn = document.getElementById('synonymManagerCancel');
+const synonymManagerResetBtn = document.getElementById('synonymManagerReset');
+
+function openSynonymManagerModal() {
+  synonymGroupsTextarea.value = synonymGroupsToText(synonymGroups);
+  synonymManagerError.hidden = true;
+  synonymManagerModal.hidden = false;
+  synonymGroupsTextarea.focus();
+}
+
+function closeSynonymManagerModal() {
+  synonymManagerModal.hidden = true;
+}
+
+synonymManagerCancelBtn.addEventListener('click', closeSynonymManagerModal);
+synonymManagerModal.addEventListener('click', (e) => {
+  if (e.target === synonymManagerModal) closeSynonymManagerModal();
+});
+synonymManagerResetBtn.addEventListener('click', () => {
+  if (!confirm('기본 동의어 사전으로 되돌릴까요? 직접 추가/수정한 내용은 사라집니다.')) return;
+  synonymGroupsTextarea.value = synonymGroupsToText(DEFAULT_SYNONYM_GROUPS);
+});
+synonymManagerSaveBtn.addEventListener('click', () => {
+  try {
+    synonymGroups = textToSynonymGroups(synonymGroupsTextarea.value);
+    saveSynonymGroupsToDisk();
+    closeSynonymManagerModal();
+    log(`동의어 사전을 저장했습니다 (${synonymGroups.length}개 그룹). 다음 [구조 분석]/[데이터 불러오기]부터 적용됩니다.`, 'ok');
+  } catch (err) {
+    synonymManagerError.textContent = friendlyErrorMessage(err);
+    synonymManagerError.hidden = false;
+  }
+});
+
+[document.getElementById('btnManageSynonymsTab1'), document.getElementById('btnManageSynonymsTab2')].forEach((btn) => {
+  if (btn) btn.addEventListener('click', openSynonymManagerModal);
 });
 
 /* -------------------------------------------------------------------------
@@ -915,12 +1051,13 @@ document.getElementById('btnDeletePreset').addEventListener('click', () => {
   }
 });
 
-// 앱 시작 시 사용자 데이터 폴더 경로를 받아와 저장된 프리셋 목록을 불러온다.
+// 앱 시작 시 사용자 데이터 폴더 경로를 받아와 저장된 프리셋/동의어 사전을 불러온다.
 ipcRenderer
   .invoke('app:getUserDataPath')
   .then((p) => {
     userDataPath = p;
     loadPresetsFromDisk();
+    loadSynonymGroupsFromDisk();
   })
   .catch((err) => {
     log(`프리셋 저장 위치를 확인하지 못했습니다: ${friendlyErrorMessage(err)}`, 'warn');
@@ -1689,7 +1826,9 @@ function renderMailMergeMappingTable() {
       select.value = autoMatch;
       mmColumnMapping[varName] = autoMatch;
       usedColumns.add(autoMatch);
-      if (reason === 'fuzzy') {
+      if (reason === 'synonym') {
+        log(`변수 "${varName}"을 동의어 사전에 따라 데이터 컬럼 "${autoMatch}"에 자동 매핑했습니다.`);
+      } else if (reason === 'fuzzy') {
         log(`변수 "${varName}"을 이름이 비슷한 데이터 컬럼 "${autoMatch}"에 자동 매핑했습니다. 맞는지 확인하세요.`, 'warn');
       }
     } else {
