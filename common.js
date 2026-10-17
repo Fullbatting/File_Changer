@@ -419,6 +419,44 @@ function normalizeFieldName(s) {
   return String(s).replace(/\s+/g, '').toLowerCase();
 }
 
+/* -------------------------------------------------------------------------
+ * 한글 자모 분해 (자동 매핑 3-1순위: 음절 단위 퍼지 매칭이 놓치는 한글 오타 보완)
+ * "성명"↔"승명"처럼 음절 하나가 통째로 달라 보이지만 실제로는 자모 하나(모음
+ * ㅓ↔ㅡ 등)만 다른 흔한 오타가 있다. 음절 단위 편집거리는 이런 경우 "음절 1개가
+ * 통째로 바뀜"으로 보기 때문에, 짧은 한글 필드명(2~4음절)에서는 상대 편집거리
+ * 비율이 쉽게 FUZZY_MAX_RATIO를 넘어 매칭되지 못한다. 음절을 초성/중성/종성
+ * 자모로 풀어서 같은 거리 계산을 다시 하면, 음절 1개 중 자모 1개만 다른 경우의
+ * 비율이 훨씬 작게 나와 "매우 비슷함"으로 올바르게 인식된다. 한글이 아닌 문자는
+ * 그대로 통과되므로 영문/숫자 필드명의 매칭 결과에는 영향이 없다.
+ * ------------------------------------------------------------------------- */
+
+const HANGUL_CHOSEONG = ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
+const HANGUL_JUNGSEONG = ['ㅏ', 'ㅐ', 'ㅑ', 'ㅒ', 'ㅓ', 'ㅔ', 'ㅕ', 'ㅖ', 'ㅗ', 'ㅘ', 'ㅙ', 'ㅚ', 'ㅛ', 'ㅜ', 'ㅝ', 'ㅞ', 'ㅟ', 'ㅠ', 'ㅡ', 'ㅢ', 'ㅣ'];
+const HANGUL_JONGSEONG = ['', 'ㄱ', 'ㄲ', 'ㄳ', 'ㄴ', 'ㄵ', 'ㄶ', 'ㄷ', 'ㄹ', 'ㄺ', 'ㄻ', 'ㄼ', 'ㄽ', 'ㄾ', 'ㄿ', 'ㅀ', 'ㅁ', 'ㅂ', 'ㅄ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'];
+const HANGUL_SYLLABLE_BASE = 0xac00;
+const HANGUL_SYLLABLE_LAST = 0xd7a3;
+
+/** 한글 완성형 음절을 초성/중성/종성 자모로 분해한다. 한글이 아닌 문자는 그대로 둔다. */
+function decomposeHangulToJamo(str) {
+  let result = '';
+  for (const ch of str) {
+    const code = ch.codePointAt(0);
+    if (code >= HANGUL_SYLLABLE_BASE && code <= HANGUL_SYLLABLE_LAST) {
+      const offset = code - HANGUL_SYLLABLE_BASE;
+      const cho = Math.floor(offset / (21 * 28));
+      const jung = Math.floor((offset % (21 * 28)) / 28);
+      const jong = offset % 28;
+      result += HANGUL_CHOSEONG[cho] + HANGUL_JUNGSEONG[jung] + HANGUL_JONGSEONG[jong];
+    } else {
+      result += ch;
+    }
+  }
+  return result;
+}
+
+const JAMO_FUZZY_MAX_DISTANCE = 2; // 절대 편집거리 상한(자모 단위)
+const JAMO_FUZZY_MAX_RATIO = 0.3; // 음절 단위(0.34)보다 더 엄격하게 잡아 과매칭을 방지
+
 /**
  * headersA 중 bCol과 가장 비슷한 컬럼을 찾는다.
  * 1순위: 정규화 후 완전히 같은 이름("exact").
@@ -428,6 +466,10 @@ function normalizeFieldName(s) {
  *   다음 단계(퍼지)를 계속 시도한다.
  * 3순위: 편집거리가 절대/상대 기준 모두를 만족하면서 유일하게 가장 가까운
  *   후보가 있을 때만 "fuzzy"로 매칭한다.
+ * 4순위: 3순위에서 못 찾았을 때만, 한글 음절을 자모로 풀어 같은 방식의 편집거리를
+ *   다시 계산한다("성명"↔"승명"처럼 음절 1개 중 자모 1개만 다른 한글 오타를
+ *   잡아낸다). 한글이 아닌 이름은 자모 분해가 원문 그대로 통과되므로 3순위와
+ *   동일한 결과가 나와 새로 매칭되는 일이 없다.
  * 모든 단계에서 후보가 여러 개 동률이면 모호하므로 매칭하지 않는다 — 잘못
  * 자동 매핑되어 데이터가 다른 컬럼에 들어가는 것이 매핑이 안 되는 것보다
  * 더 나쁘다. usedHeadersA에 담긴 컬럼은 이미 다른 B 컬럼에 매칭되었으므로
@@ -467,6 +509,22 @@ function findAutoMatch(bCol, headersA, usedHeadersA) {
   if (candidates.length > 0 && (candidates.length === 1 || candidates[0].dist < candidates[1].dist)) {
     return { match: candidates[0].a, reason: 'fuzzy' };
   }
+
+  const bJamo = decomposeHangulToJamo(bNorm);
+  const jamoCandidates = available
+    .map((a) => {
+      const aJamo = decomposeHangulToJamo(normalize(a));
+      const dist = levenshteinDistance(aJamo, bJamo);
+      const ratio = dist / Math.max(aJamo.length, bJamo.length, 1);
+      return { a, dist, ratio };
+    })
+    .filter((c) => c.dist > 0 && c.dist <= JAMO_FUZZY_MAX_DISTANCE && c.ratio <= JAMO_FUZZY_MAX_RATIO)
+    .sort((x, y) => x.dist - y.dist);
+
+  if (jamoCandidates.length > 0 && (jamoCandidates.length === 1 || jamoCandidates[0].dist < jamoCandidates[1].dist)) {
+    return { match: jamoCandidates[0].a, reason: 'fuzzy' };
+  }
+
   return { match: null, reason: null };
 }
 
@@ -663,6 +721,7 @@ module.exports = {
   extractHeaders,
   normalizeFieldName,
   levenshteinDistance,
+  decomposeHangulToJamo,
   findAutoMatch,
   xmlEscape,
   formatPreviewValue,
