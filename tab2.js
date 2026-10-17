@@ -19,7 +19,8 @@ const {
   evictOldestIfFull,
   confirmModal,
   readWorkbookSmart,
-  EXCEL_FILTERS,
+  getHwpxSectionNames,
+  DATA_FILE_FILTERS,
   DOCX_FILTERS,
   HWPX_FILTERS,
   TEMPLATE_FILTERS,
@@ -179,17 +180,6 @@ function renderMergedDocument(filePath, format, data) {
  * (docx에는 docxtemplater라는 성숙한 라이브러리가 있지만, HWPX를 지원하는
  * 오픈소스 JS 라이브러리는 없어 동일한 원리를 직접 구현했다.)
  * ------------------------------------------------------------------------- */
-
-/** hwpx zip에서 본문 섹션 XML 파일 이름 목록을 번호순으로 반환 */
-function getHwpxSectionNames(zip) {
-  return Object.keys(zip.files)
-    .filter((name) => /^Contents\/section\d+\.xml$/.test(name))
-    .sort((a, b) => {
-      const na = parseInt(a.match(/section(\d+)\.xml/)[1], 10);
-      const nb = parseInt(b.match(/section(\d+)\.xml/)[1], 10);
-      return na - nb;
-    });
-}
 
 /** section XML 하나에서 <hp:t> 런들의 원본 위치와, 이를 이어붙인 순수 텍스트를 함께 추출 */
 function parseHwpxRuns(xml) {
@@ -412,7 +402,7 @@ function resetMailMergeDataState() {
   mailMergeDataStatus.className = 'pill warn';
 }
 
-bindDropzone(dropMailMergeData, fileNameMailMergeData, EXCEL_FILTERS, (p) => {
+bindDropzone(dropMailMergeData, fileNameMailMergeData, DATA_FILE_FILTERS, (p) => {
   mmDataPath = p;
   log(`메일머지 데이터 파일 선택됨: ${p}`);
   resetMailMergeDataState();

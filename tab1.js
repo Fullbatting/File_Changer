@@ -16,7 +16,7 @@ const {
   safeWriteFileSync,
   confirmModal,
   readWorkbookSmart,
-  EXCEL_FILTERS,
+  DATA_FILE_FILTERS,
   JSON_FILTERS,
   bindDropzone,
   refreshSheetSelector,
@@ -79,7 +79,7 @@ function onTab1SheetChanged(name) {
   log(`시트가 "${name}"(으)로 변경되었습니다. [구조 분석]을 다시 실행하세요.`, 'warn');
 }
 
-bindDropzone(dropA, fileNameA, EXCEL_FILTERS, (p) => {
+bindDropzone(dropA, fileNameA, DATA_FILE_FILTERS, (p) => {
   fileAPath = p;
   log(`원본(A) 파일 선택됨: ${p}`);
   resetAnalysisState();
@@ -94,7 +94,7 @@ bindDropzone(dropA, fileNameA, EXCEL_FILTERS, (p) => {
   );
 });
 
-bindDropzone(dropB, fileNameB, EXCEL_FILTERS, (p) => {
+bindDropzone(dropB, fileNameB, DATA_FILE_FILTERS, (p) => {
   fileBPath = p;
   log(`타겟(B) 파일 선택됨: ${p}`);
   resetAnalysisState();
