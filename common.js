@@ -470,6 +470,24 @@ function findAutoMatch(bCol, headersA, usedHeadersA) {
   return { match: null, reason: null };
 }
 
+/**
+ * 값을 화면 표시용 문자열로 안전하게 바꾼다. 엑셀 날짜 셀은 readWorkbookSmart가
+ * cellDates:true로 읽어 JS Date 객체가 되는데, 그냥 String()으로 바꾸면
+ * "Thu Jan 01 2026 00:00:00 GMT+0900..." 같은 장문이 되어버리므로, 시/분/초가
+ * 전부 0인(순수 날짜) 값은 "YYYY-MM-DD"로, 그 외에는 "YYYY-MM-DD HH:MM:SS"로
+ * 표기한다. 탭1의 컬럼 매핑 미리보기와 탭2의 메일머지 변수 치환이 함께 쓴다.
+ */
+function formatPreviewValue(val) {
+  if (val === '' || val === null || val === undefined) return '';
+  if (val instanceof Date) {
+    const pad = (n) => String(n).padStart(2, '0');
+    const datePart = `${val.getFullYear()}-${pad(val.getMonth() + 1)}-${pad(val.getDate())}`;
+    const hasTime = val.getHours() !== 0 || val.getMinutes() !== 0 || val.getSeconds() !== 0;
+    return hasTime ? `${datePart} ${pad(val.getHours())}:${pad(val.getMinutes())}:${pad(val.getSeconds())}` : datePart;
+  }
+  return String(val);
+}
+
 /** XML 텍스트 노드에 안전하게 삽입할 수 있도록 특수문자를 이스케이프 */
 function xmlEscape(str) {
   return String(str)
@@ -647,6 +665,7 @@ module.exports = {
   levenshteinDistance,
   findAutoMatch,
   xmlEscape,
+  formatPreviewValue,
   getUserDataPath,
   onUserDataPathReady,
 };

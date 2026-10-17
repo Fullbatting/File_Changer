@@ -23,6 +23,7 @@ const {
   extractHeaders,
   findAutoMatch,
   xmlEscape,
+  formatPreviewValue,
   getUserDataPath,
   onUserDataPathReady,
 } = common;
@@ -37,6 +38,7 @@ let headersA = [];
 let headersB = [];
 let mapping = {}; // { bColumn: aColumn|null }
 let requiredColumns = new Set(); // 저장 전 검증에서 "필수"로 체크된 B 컬럼
+let sampleRowsA = []; // 원본(A) 파일의 앞 2행 (매핑 테이블의 값 미리보기용)
 
 const dropA = document.getElementById('dropA');
 const dropB = document.getElementById('dropB');
@@ -63,6 +65,7 @@ function resetAnalysisState() {
   headerRowIndexB = 0;
   mapping = {};
   requiredColumns = new Set();
+  sampleRowsA = [];
   currentPresetId = null;
   renderMappingTable();
   if (presetSelect) presetSelect.value = '';
@@ -106,13 +109,27 @@ bindDropzone(dropB, fileNameB, EXCEL_FILTERS, (p) => {
   );
 });
 
+/** sampleRowsA에서 aCol 컬럼의 실제 값(앞 2행)을 뽑아 미리보기 텍스트로 만든다 */
+function buildColumnPreview(aCol) {
+  if (!aCol) return '';
+  return sampleRowsA
+    .map((row) => formatPreviewValue(row[aCol]))
+    .filter((v) => v !== '')
+    .join(' / ');
+}
+
+/**
+ * 매핑 테이블을 그린다. 자동/수동으로 선택된 원본(A) 컬럼의 실제 값(앞 2행)을
+ * "미리보기" 칸에 함께 보여줘, 변환을 실행하기 전에 매핑이 맞는지 바로 확인할
+ * 수 있게 한다 (CSV/엑셀 임포트 도구들의 "Match Columns" 단계에서 흔히 쓰이는 패턴).
+ */
 function renderMappingTable() {
   mappingTableBody.innerHTML = '';
   mapping = {};
   requiredColumns = new Set();
 
   if (headersB.length === 0) {
-    mappingTableBody.innerHTML = '<tr><td colspan="3" class="empty-hint">먼저 [구조 분석]을 실행하세요.</td></tr>';
+    mappingTableBody.innerHTML = '<tr><td colspan="4" class="empty-hint">먼저 [구조 분석]을 실행하세요.</td></tr>';
     return;
   }
 
@@ -142,6 +159,9 @@ function renderMappingTable() {
     });
 
     // 이름이 동일(완전 일치)/동의어 사전에 등록됨/편집거리상 비슷함 중 하나면 자동 매핑
+    const tdPreview = document.createElement('td');
+    tdPreview.className = 'mapping-preview-cell';
+
     const { match: autoMatch, reason } = findAutoMatch(bCol, headersA, usedHeadersA);
     if (autoMatch) {
       select.value = autoMatch;
@@ -155,13 +175,16 @@ function renderMappingTable() {
     } else {
       mapping[bCol] = '';
     }
+    tdPreview.textContent = buildColumnPreview(mapping[bCol]);
 
     select.addEventListener('change', () => {
       mapping[bCol] = select.value;
+      tdPreview.textContent = buildColumnPreview(select.value);
     });
 
     tdSelect.appendChild(select);
     tr.appendChild(tdSelect);
+    tr.appendChild(tdPreview);
 
     const tdRequired = document.createElement('td');
     tdRequired.style.textAlign = 'center';
@@ -206,6 +229,12 @@ document.getElementById('btnAnalyze').addEventListener('click', () => {
       log(`타겟(B) 파일: 제목/빈 행으로 보이는 ${headerRowIndexB}개 행을 건너뛰고 ${headerRowIndexB + 1}행을 헤더로 인식했습니다.`, 'warn');
     }
     log(`원본(A) 컬럼 ${headersA.length}개, 타겟(B) 컬럼 ${headersB.length}개 발견`, 'ok');
+
+    // 매핑 테이블에 값 미리보기를 보여주기 위해 원본(A)의 앞 2행을 함께 읽어둔다.
+    const workbookA = readWorkbookSmart(fileAPath);
+    const sheetA = workbookA.Sheets[sheetAName || workbookA.SheetNames[0]];
+    const previewRowsRaw = XLSX.utils.sheet_to_json(sheetA, { defval: '', range: headerRowIndexA });
+    sampleRowsA = previewRowsRaw.slice(0, 2);
 
     renderMappingTable();
     analyzeStatus.textContent = '분석 완료';
@@ -259,6 +288,8 @@ function applyMappingToTable(loadedMapping) {
       const optionExists = !aCol || Array.from(select.options).some((o) => o.value === aCol);
       select.value = optionExists ? aCol : '';
       mapping[bCol] = select.value;
+      const previewCell = select.closest('tr').querySelector('.mapping-preview-cell');
+      if (previewCell) previewCell.textContent = buildColumnPreview(select.value);
       appliedCount += 1;
       if (aCol && !optionExists) {
         skippedCount += 1;

@@ -28,6 +28,7 @@ const {
   extractHeaders,
   findAutoMatch,
   xmlEscape,
+  formatPreviewValue: formatMailMergeValue,
 } = common;
 
 let templatePath = null;
@@ -385,24 +386,6 @@ function sanitizeFilename(name) {
 }
 
 /**
- * 템플릿 변수에 채울 데이터 값을 문자열로 바꾼다. 날짜 서식의 엑셀 셀은
- * readWorkbookSmart가 cellDates:true로 읽어 JS Date 객체가 되는데, 그냥
- * String()으로 바꾸면 "Thu Jan 01 2026 00:00:00 GMT+0900..." 같은 장문이
- * 문서에 그대로 들어가 버린다. 시/분/초가 전부 0인(순수 날짜) 값은
- * "YYYY-MM-DD"로, 그 외에는 "YYYY-MM-DD HH:MM:SS"로 사람이 읽기 쉽게 표기한다.
- */
-function formatMailMergeValue(val) {
-  if (val === '' || val === null || val === undefined) return '';
-  if (val instanceof Date) {
-    const pad = (n) => String(n).padStart(2, '0');
-    const datePart = `${val.getFullYear()}-${pad(val.getMonth() + 1)}-${pad(val.getDate())}`;
-    const hasTime = val.getHours() !== 0 || val.getMinutes() !== 0 || val.getSeconds() !== 0;
-    return hasTime ? `${datePart} ${pad(val.getHours())}:${pad(val.getMinutes())}:${pad(val.getSeconds())}` : datePart;
-  }
-  return String(val);
-}
-
-/**
  * 각 행의 결과 파일명을 미리 계산한다. filenameColumn 값이 비어 있으면
  * "행N"으로 대체하고, 같은 이름이 여러 번 나오면 "(2)", "(3)"...을 붙여
  * 서로 다른 파일로 구분한다. 검증 미리보기와 실제 생성에서 동일한 결과가
@@ -464,14 +447,31 @@ function renderFilenameColumnOptions() {
   };
 }
 
-/** 템플릿 변수 ← 데이터 컬럼 매핑 테이블을 그린다 (공통 findAutoMatch로 자동 매핑 제안) */
+const MAPPING_PREVIEW_SAMPLE_SIZE = 2;
+
+/** mmDataRows의 앞부분 몇 행에서 해당 컬럼의 실제 값을 뽑아 미리보기 텍스트로 만든다 */
+function buildMailMergeColumnPreview(column) {
+  if (!column) return '';
+  return mmDataRows
+    .slice(0, MAPPING_PREVIEW_SAMPLE_SIZE)
+    .map((row) => formatMailMergeValue(row[column]))
+    .filter((v) => v !== '')
+    .join(' / ');
+}
+
+/**
+ * 템플릿 변수 ← 데이터 컬럼 매핑 테이블을 그린다 (공통 findAutoMatch로 자동 매핑 제안).
+ * 매핑된 데이터 컬럼의 실제 값(앞 2행)을 미리보기로 함께 보여줘, 자동/수동 매핑이
+ * 맞는지 일괄 생성을 누르기 전에 바로 확인할 수 있게 한다 (CSV/엑셀 임포트 도구들의
+ * "Match Columns" 단계에서 흔히 쓰이는 패턴).
+ */
 function renderMailMergeMappingTable() {
   mailMergeMappingTableBody.innerHTML = '';
   mmColumnMapping = {};
 
   if (templateVars.length === 0 || mmDataHeaders.length === 0) {
     mailMergeMappingTableBody.innerHTML =
-      '<tr><td colspan="2" class="empty-hint">먼저 [변수 자동 추출]과 [데이터 불러오기]를 실행하세요.</td></tr>';
+      '<tr><td colspan="3" class="empty-hint">먼저 [변수 자동 추출]과 [데이터 불러오기]를 실행하세요.</td></tr>';
     return;
   }
 
@@ -499,6 +499,9 @@ function renderMailMergeMappingTable() {
       select.appendChild(opt);
     });
 
+    const tdPreview = document.createElement('td');
+    tdPreview.className = 'mapping-preview-cell';
+
     const { match: autoMatch, reason } = findAutoMatch(varName, mmDataHeaders, usedColumns);
     if (autoMatch) {
       select.value = autoMatch;
@@ -512,13 +515,16 @@ function renderMailMergeMappingTable() {
     } else {
       mmColumnMapping[varName] = '';
     }
+    tdPreview.textContent = buildMailMergeColumnPreview(mmColumnMapping[varName]);
 
     select.addEventListener('change', () => {
       mmColumnMapping[varName] = select.value;
+      tdPreview.textContent = buildMailMergeColumnPreview(select.value);
     });
 
     tdSelect.appendChild(select);
     tr.appendChild(tdSelect);
+    tr.appendChild(tdPreview);
     mailMergeMappingTableBody.appendChild(tr);
   });
 }
