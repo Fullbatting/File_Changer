@@ -8,6 +8,7 @@ const path = require('path');
 const XLSX = require('xlsx');
 const PizZip = require('pizzip');
 const iconv = require('iconv-lite');
+const { readHwpTables, cellsToRows } = require('./hwp-reader.js');
 
 /* =========================================================================
    0. 공통 유틸 (로그, 탭 전환)
@@ -172,9 +173,10 @@ function confirmModal(modalEl, proceedBtn, cancelBtn) {
 }
 
 /* -------------------------------------------------------------------------
- * 한글(HWPX) 문서의 표를 데이터로 읽기
+ * 한글 문서(HWPX/HWP)의 표를 데이터로 읽기
  * HWPX 본문(Contents/section*.xml)의 표(<hp:tbl> > <hp:tr> > <hp:tc>)를 2차원
- * 배열로 풀어, 표 하나를 엑셀 시트 하나처럼 다룰 수 있게 한다. SheetJS 워크북
+ * 배열로 풀어(구형 .hwp는 hwp-reader.js가 같은 형태로 읽는다), 표 하나를 엑셀
+ * 시트 하나처럼 다룰 수 있게 한다. SheetJS 워크북
  * 형태로 맞춰 두면 시트 선택·헤더 자동 감지·매핑·변환·일괄 생성 로직을
  * 엑셀/CSV와 완전히 똑같이 재사용할 수 있다. 표 안에 표가 또 들어 있는(중첩)
  * 경우를 정확히 가르기 위해 정규식 대신 DOMParser로 XML 구조를 그대로 따라간다.
@@ -234,19 +236,9 @@ function hwpxCellText(tcEl, tblEl) {
     .trim();
 }
 
-/**
- * <hp:tbl> 하나를 2차원 배열로 바꾼다. 각 셀은 cellAddr(행/열 주소)에 놓고,
- * 병합 셀은 왼쪽 위 칸에 값을 둔다. 세로 병합(rowSpan)은 아래 칸에도 같은 값을
- * 채운다 — 한글 표는 "부서"처럼 여러 행이 공유하는 값을 세로 병합으로 자주
- * 표현하는데, 비워 두면 둘째 행부터 값이 사라지고, 2단 헤더(위: "이름"(세로병합)
- * | "연락처"(가로병합), 아래: "전화번호" | "이메일")에서도 아래 행에 "이름"이
- * 채워져야 그 행이 완전한 헤더 행이 되기 때문이다. 가로 병합(colSpan)은 같은
- * 이름의 컬럼이 여러 개 생기지 않도록 채우지 않는다.
- */
+/** <hp:tbl> 하나를 2차원 배열로 바꾼다. 각 셀은 cellAddr(행/열 주소)에 놓고, 병합 처리는 cellsToRows에 맡긴다 */
 function hwpxTableToRows(tblEl) {
   const cells = [];
-  let rowCount = 0;
-  let colCount = 0;
   childElementsByLocalName(tblEl, 'tr').forEach((trEl, trIdx) => {
     let colCursor = 0;
     childElementsByLocalName(trEl, 'tc').forEach((tcEl) => {
@@ -257,20 +249,13 @@ function hwpxTableToRows(tblEl) {
       const rowSpan = Math.max(1, intAttribute(span, 'rowSpan', 1));
       const colSpan = Math.max(1, intAttribute(span, 'colSpan', 1));
       colCursor = col + colSpan;
-      cells.push({ row, col, rowSpan, text: hwpxCellText(tcEl, tblEl) });
-      rowCount = Math.max(rowCount, row + rowSpan);
-      colCount = Math.max(colCount, col + colSpan);
+      cells.push({ row, col, rowSpan, colSpan, text: hwpxCellText(tcEl, tblEl) });
     });
   });
-
-  const rows = Array.from({ length: rowCount }, () => Array(colCount).fill(''));
-  cells.forEach(({ row, col, rowSpan, text }) => {
-    for (let r = row; r < row + rowSpan; r++) rows[r][col] = text;
-  });
-  return rows;
+  return cellsToRows(cells);
 }
 
-/** .hwpx/.hwpt 문서의 (빈 표를 뺀) 모든 표를 문서에 나오는 순서대로 [{ name, rows }]로 읽는다 */
+/** .hwpx/.hwpt 문서의 모든 표를 문서에 나오는 순서대로 [{ rows }]로 읽는다 */
 function readHwpxTables(filePath) {
   const zip = new PizZip(safeReadFileSync(filePath));
   const sectionNames = getHwpxSectionNames(zip);
@@ -285,16 +270,20 @@ function readHwpxTables(filePath) {
       throw new Error(`한글 문서 본문(${name})을 해석할 수 없습니다. 파일이 손상되었을 수 있습니다.`);
     }
     Array.from(doc.getElementsByTagNameNS('*', 'tbl')).forEach((tblEl) => {
-      const rows = hwpxTableToRows(tblEl);
-      if (rows.some((r) => r.some((v) => v !== ''))) tables.push({ name: `표 ${tables.length + 1}`, rows });
+      tables.push({ rows: hwpxTableToRows(tblEl) });
     });
   });
   return tables;
 }
 
-/** 한글 문서의 표들을 "표 1", "표 2"... 이름의 시트로 담은 SheetJS 워크북을 만든다 */
-function buildWorkbookFromHwpxTables(filePath) {
-  const tables = readHwpxTables(filePath);
+/**
+ * 한글 문서(.hwpx/.hwp)에서 읽은 표들을 "표 1", "표 2"... 이름의 시트로 담은 SheetJS
+ * 워크북으로 만든다. 글자가 하나도 없는 빈 표는 뺀다.
+ */
+function buildWorkbookFromTables(rawTables) {
+  const tables = rawTables
+    .filter(({ rows }) => rows.some((r) => r.some((v) => v !== '')))
+    .map(({ rows }, i) => ({ name: `표 ${i + 1}`, rows }));
   if (tables.length === 0) {
     throw new Error('한글 문서에서 표를 찾을 수 없습니다. 데이터가 표(행/열) 형태로 들어 있는지 확인하세요.');
   }
@@ -331,7 +320,7 @@ const WORKBOOK_CACHE_LIMIT = 8;
 /**
  * 파일 경로로부터 워크북을 읽는다.
  * - .csv: 인코딩 자동 판별 후 문자열로 파싱 (한글 CP949 CSV 대응)
- * - .hwpx/.hwpt: 문서 안의 표 하나하나를 시트 하나로 변환
+ * - .hwpx/.hwpt/.hwp: 한글 문서 안의 표 하나하나를 시트 하나로 변환 (.hwp는 hwp-reader.js)
  * - .xlsx/.xls: XLSX.readFile 사용
  */
 function readWorkbookSmart(filePath) {
@@ -344,9 +333,9 @@ function readWorkbookSmart(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   let workbook;
   if (ext === '.hwp') {
-    throw new Error('구형 .hwp(바이너리) 포맷은 지원하지 않습니다. 한글 프로그램에서 "다른 이름으로 저장 > HWPX"로 변환한 뒤 다시 시도하세요.');
+    workbook = buildWorkbookFromTables(readHwpTables(safeReadFileSync(filePath)));
   } else if (ext === '.hwpx' || ext === '.hwpt') {
-    workbook = buildWorkbookFromHwpxTables(filePath);
+    workbook = buildWorkbookFromTables(readHwpxTables(filePath));
   } else if (ext === '.csv') {
     const buffer = safeReadFileSync(filePath);
     const text = decodeCsvBuffer(buffer);
@@ -376,9 +365,9 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
 });
 
 // 표 형태 데이터 파일: xlsx와 매크로 포함 버전(xlsm)은 zip+XML 구조가 동일해 xlsx 파서로 함께 읽히고,
-// 한글 문서(hwpx)와 그 서식 파일(hwpt)은 문서 안의 표를 시트처럼 읽는다
+// 한글 문서(hwpx/hwp)와 그 서식 파일(hwpt)은 문서 안의 표를 시트처럼 읽는다
 const DATA_FILE_FILTERS = [
-  { name: 'Excel / CSV / 한글(HWPX) 표', extensions: ['xlsx', 'xls', 'xlsm', 'csv', 'hwpx', 'hwpt'] },
+  { name: 'Excel / CSV / 한글 문서 속 표', extensions: ['xlsx', 'xls', 'xlsm', 'csv', 'hwpx', 'hwpt', 'hwp'] },
   { name: 'All Files', extensions: ['*'] },
 ];
 

@@ -81,7 +81,7 @@ function getTemplateFormat(filePath) {
   if (ext === '.docx' || ext === '.dotx') return 'docx';
   if (ext === '.hwpx' || ext === '.hwpt') return 'hwpx';
   if (ext === '.hwp') {
-    throw new Error('구형 .hwp(바이너리) 포맷은 지원하지 않습니다. 한글 프로그램에서 "다른 이름으로 저장 > HWPX"로 변환한 뒤 다시 시도하세요.');
+    throw new Error('구형 .hwp 문서는 메일머지 템플릿으로 쓸 수 없습니다(일괄 생성의 데이터 파일로는 읽을 수 있습니다). 한글 프로그램에서 "다른 이름으로 저장 > HWPX"로 저장한 뒤 그 파일을 템플릿으로 선택하세요.');
   }
   throw new Error('지원하지 않는 템플릿 형식입니다. .docx, .dotx, .hwpx 또는 .hwpt 파일을 선택하세요.');
 }
