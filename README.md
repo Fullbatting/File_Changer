@@ -20,6 +20,7 @@ Electron + Node.js + JavaScript로 만든 데스크톱 프로그램입니다. �
    - 최초 실행 시 필요한 패키지와 프로그램 실행 엔진(Electron, 약 100MB)을 자동으로 내려받습니다 (인터넷 연결 필요, 몇 분 정도 소요).
    - 이후 실행부터는 이미 설치된 패키지를 빠르게 확인만 하고 바로 프로그램이 열립니다 (보통 몇 초 이내). 업데이트로 새 패키지나 새 실행 엔진 버전이 필요해진 경우에도 자동으로 함께 설치됩니다.
    - 인터넷 연결이 없는 상태에서 실행하면, 이미 설치되어 있던 패키지 그대로 프로그램을 계속 엽니다.
+   - 회사망처럼 외부 사이트가 제한된 곳에서는 최초 설치 때 `registry.npmjs.org`(패키지), `cdn.sheetjs.com`(엑셀 읽기 라이브러리), `github.com`과 GitHub 파일 서버(실행 엔진) 접속이 허용되어 있어야 합니다.
 
 > **사전 준비**: PC에 [Node.js](https://nodejs.org/) **22.12 이상** (LTS 버전 권장)이 설치되어 있어야 합니다. `run.bat` 실행 시 Node.js가 없거나 버전이 낮으면 안내 메시지가 표시됩니다.
 >
@@ -58,7 +59,7 @@ npm start                               # 앱 실행 (electron .)
 
 ## 주요 오픈소스 라이브러리
 
-- [xlsx (SheetJS)](https://github.com/SheetJS/sheetjs) — 엑셀/CSV 읽기(Extract) (Apache-2.0)
+- [xlsx (SheetJS)](https://git.sheetjs.com/sheetjs/sheetjs) 0.20.3 — 엑셀/CSV 읽기(Extract) (Apache-2.0). npm 레지스트리의 xlsx는 0.18.5에서 업데이트가 멈춰 보안 수정이 없으므로, SheetJS 공식 배포처(`cdn.sheetjs.com`)에서 설치합니다.
 - [exceljs](https://github.com/exceljs/exceljs) — 서식이 적용된 엑셀 파일 쓰기(Load) (MIT)
 - [docxtemplater](https://github.com/open-xml-templating/docxtemplater) — Word 템플릿 메일머지 (MIT)
 - [pizzip](https://github.com/open-xml-templating/pizzip) — zip/OOXML 처리 (MIT)
