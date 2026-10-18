@@ -3,8 +3,8 @@
 // 직접 입력(1건) / 데이터 파일로 일괄 생성(메일머지) 두 가지 모드
 
 const { ipcRenderer } = require('electron');
+const fs = require('fs');
 const path = require('path');
-const XLSX = require('xlsx');
 const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
 const common = require('./common.js');
@@ -18,7 +18,6 @@ const {
   getFileMtimeMs,
   evictOldestIfFull,
   confirmModal,
-  readWorkbookSmart,
   getHwpxSectionNames,
   DATA_FILE_FILTERS,
   DOCX_FILTERS,
@@ -26,7 +25,7 @@ const {
   TEMPLATE_FILTERS,
   bindDropzone,
   refreshSheetSelector,
-  extractHeaders,
+  readSheetTable,
   findAutoMatch,
   xmlEscape,
   formatPreviewValue: formatMailMergeValue,
@@ -39,7 +38,6 @@ let templateVars = [];
 let mailMergeMode = 'manual';
 let mmDataPath = null;
 let mmDataSheetName = null;
-let mmDataHeaderRowIndex = 0;
 let mmDataHeaders = [];
 let mmDataRows = [];
 let mmColumnMapping = {}; // { 템플릿변수: 데이터컬럼명 }
@@ -97,27 +95,44 @@ function isTemplateControlToken(varName) {
 }
 
 /** docx 파일 내부 word/document.xml 에서 {{변수명}} 패턴을 추출 */
+/**
+ * docx 안에서 변수를 찾을 XML 파트들: 본문 → 머리글 → 바닥글 → 각주/미주 순.
+ * docxtemplater는 본문뿐 아니라 머리글/바닥글도 치환하므로, 본문만 보면 머리글의
+ * {{회사명}} 같은 변수는 입력칸 없이 "undefined"로 찍혀 나온다.
+ */
+function getDocxTemplateParts(zip) {
+  const order = (name) => {
+    if (name === 'word/document.xml') return 0;
+    if (/^word\/header\d*\.xml$/.test(name)) return 1;
+    if (/^word\/footer\d*\.xml$/.test(name)) return 2;
+    return 3;
+  };
+  return Object.keys(zip.files)
+    .filter((name) => /^word\/(document|header\d*|footer\d*|footnotes|endnotes)\.xml$/.test(name))
+    .sort((a, b) => order(a) - order(b) || a.localeCompare(b, undefined, { numeric: true }));
+}
+
+/** docx의 본문·머리글·바닥글·각주에서 {{변수명}} 패턴을 추출 */
 function extractTemplateVariables(filePath) {
   const content = safeReadFileSync(filePath, 'binary');
   const zip = new PizZip(content);
 
-  const docXmlFile = zip.file('word/document.xml');
-  if (!docXmlFile) {
+  if (!zip.file('word/document.xml')) {
     throw new Error('올바른 .docx 파일이 아닙니다. (word/document.xml 없음)');
   }
-  const xml = docXmlFile.asText();
-
-  // Word 는 텍스트를 여러 <w:t> 런(run)으로 쪼개는 경우가 많으므로,
-  // XML 태그를 제거한 순수 텍스트에서 {{변수명}} 패턴을 탐색한다.
-  const plainText = xml.replace(/<[^>]+>/g, '');
 
   const regex = /\{\{\s*([^{}]+?)\s*\}\}/g;
   const found = new Set();
-  let match;
-  while ((match = regex.exec(plainText)) !== null) {
-    const varName = match[1].trim();
-    if (varName && !isTemplateControlToken(varName)) found.add(varName);
-  }
+  getDocxTemplateParts(zip).forEach((name) => {
+    // Word 는 텍스트를 여러 <w:t> 런(run)으로 쪼개는 경우가 많으므로,
+    // XML 태그를 제거한 순수 텍스트에서 {{변수명}} 패턴을 탐색한다.
+    const plainText = zip.file(name).asText().replace(/<[^>]+>/g, '');
+    let match;
+    while ((match = regex.exec(plainText)) !== null) {
+      const varName = match[1].trim();
+      if (varName && !isTemplateControlToken(varName)) found.add(varName);
+    }
+  });
 
   return Array.from(found);
 }
@@ -151,6 +166,8 @@ function renderDocxDocument(filePath, data) {
     paragraphLoop: true,
     linebreaks: true,
     delimiters: { start: '{{', end: '}}' },
+    // 값이 없는 변수는 docxtemplater 기본값("undefined" 글자) 대신 빈칸으로
+    nullGetter: () => '',
   });
 
   try {
@@ -161,8 +178,20 @@ function renderDocxDocument(filePath, data) {
     throw new Error(detailMsg || renderErr.message || '템플릿 렌더링 중 오류가 발생했습니다.');
   }
 
-  return doc.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' });
+  const outZip = doc.getZip();
+  // .dotx(서식 파일)로 만든 결과는 .docx로 저장되므로 본문 형식도 "문서"로 바꿔야 Word가 연다
+  const contentTypes = outZip.file('[Content_Types].xml');
+  if (contentTypes) {
+    const xml = contentTypes.asText();
+    if (xml.includes(DOTX_MAIN_CONTENT_TYPE)) {
+      outZip.file('[Content_Types].xml', xml.split(DOTX_MAIN_CONTENT_TYPE).join(DOCX_MAIN_CONTENT_TYPE));
+    }
+  }
+  return outZip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
+
+const DOTX_MAIN_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml';
+const DOCX_MAIN_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml';
 
 /** 템플릿 형식에 맞는 렌더링 함수를 호출하는 공용 디스패처 (직접 입력/일괄 생성 모두 사용) */
 function renderMergedDocument(filePath, format, data) {
@@ -230,7 +259,11 @@ function renderHwpxXml(xml, runs, plainText, data) {
     const varName = match[1].trim();
     const matchStart = match.index;
     const matchEnd = matchStart + match[0].length;
-    const value = xmlEscape(Object.prototype.hasOwnProperty.call(data, varName) ? data[varName] : '');
+    // 값 속 줄바꿈(엑셀 셀의 Alt+Enter, 한글 표 셀의 여러 문단)은 한글의 줄바꿈 요소로 바꾼다
+    const value = xmlEscape(Object.prototype.hasOwnProperty.call(data, varName) ? data[varName] : '').replace(
+      /\r\n|\r|\n/g,
+      '<hp:lineBreak/>'
+    );
 
     let firstTouchedRun = true;
     runs.forEach((run, i) => {
@@ -355,7 +388,7 @@ function renderVarForm() {
 /* -------------------------------------------------------------------------
  * 메일머지 일괄 생성 (데이터 파일의 각 행마다 문서 하나씩 생성)
  * 엑셀/CSV 읽기·시트 선택·헤더 행 자동 감지·편집거리 기반 컬럼 자동 매핑은
- * 공통 모듈(common.js)의 readWorkbookSmart/extractHeaders/refreshSheetSelector/
+ * 공통 모듈(common.js)의 readSheetTable/refreshSheetSelector/
  * findAutoMatch를 그대로 재사용한다 (탭1의 컬럼 매핑과 동일한 로직).
  * ------------------------------------------------------------------------- */
 
@@ -371,8 +404,15 @@ sheetRowMailMerge.addEventListener('click', (e) => e.stopPropagation());
 
 /** Windows/macOS 파일명에 쓸 수 없는 문자를 "_"로 바꾸고 길이를 적절히 제한 */
 function sanitizeFilename(name) {
-  const cleaned = String(name).trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_');
-  return cleaned.slice(0, 80);
+  let cleaned = formatMailMergeValue(name)
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+    .slice(0, 80)
+    .trim()
+    // Windows는 끝의 점/공백을 지워버려 "홍길동."과 "홍길동"이 같은 파일이 된다
+    .replace(/[. ]+$/, '');
+  // Windows 예약 이름(CON, PRN, AUX, NUL, COM1~9, LPT1~9)은 파일 이름으로 쓸 수 없다
+  if (/^(con|prn|aux|nul|com\d|lpt\d)$/i.test(cleaned)) cleaned = `_${cleaned}`;
+  return cleaned;
 }
 
 /**
@@ -382,13 +422,14 @@ function sanitizeFilename(name) {
  * 나오도록 이 함수 하나만 사용한다.
  */
 function computeOutputFilenames(rows, filenameColumn, extension) {
-  const usedCount = new Map();
+  // Windows·macOS 파일 시스템은 대소문자를 구분하지 않으므로 "Kim"과 "kim"도 같은 이름으로 센다
+  const used = new Set();
   return rows.map((row, idx) => {
     let base = filenameColumn ? sanitizeFilename(row[filenameColumn]) : '';
     if (!base) base = `행${idx + 1}`;
-    const count = usedCount.get(base) || 0;
-    usedCount.set(base, count + 1);
-    const finalName = count === 0 ? base : `${base}(${count + 1})`;
+    let finalName = base;
+    for (let n = 2; used.has(finalName.toLowerCase()); n++) finalName = `${base}(${n})`;
+    used.add(finalName.toLowerCase());
     return `${finalName}.${extension}`;
   });
 }
@@ -526,16 +567,16 @@ document.getElementById('btnLoadMailMergeData').addEventListener('click', () => 
 
     log(`메일머지 데이터를 불러옵니다... (시트: ${mmDataSheetName || '첫 번째 시트'})`);
 
-    const result = extractHeaders(mmDataPath, mmDataSheetName);
+    // displayText: 문서에는 엑셀 화면에 보이는 그대로(1,500,000 / 15% / ₩1,000) 들어가야 한다
+    const result = readSheetTable(mmDataPath, mmDataSheetName, { displayText: true });
     mmDataHeaders = result.headers;
-    mmDataHeaderRowIndex = result.headerRowIndex;
-    if (mmDataHeaderRowIndex > 0) {
-      log(`제목/빈 행으로 보이는 ${mmDataHeaderRowIndex}개 행을 건너뛰고 ${mmDataHeaderRowIndex + 1}행을 헤더로 인식했습니다.`, 'warn');
+    if (result.headerRowIndex > 0) {
+      log(`제목/빈 행으로 보이는 ${result.headerRowIndex}개 행을 건너뛰고 ${result.headerRowIndex + 1}번째 행을 헤더로 인식했습니다.`, 'warn');
     }
+    const renamed = result.headers.filter((k, i) => k !== result.labels[i]);
+    if (renamed.length > 0) log(`이름이 같은 컬럼이 있어 ${renamed.join(', ')}(으)로 구분했습니다.`, 'warn');
 
-    const workbook = readWorkbookSmart(mmDataPath);
-    const sheet = workbook.Sheets[mmDataSheetName || workbook.SheetNames[0]];
-    mmDataRows = XLSX.utils.sheet_to_json(sheet, { defval: '', range: mmDataHeaderRowIndex });
+    mmDataRows = result.rows;
     if (mmDataRows.length === 0) throw new Error('데이터 파일에 변환할 행이 없습니다.');
 
     renderMailMergeMappingTable();
@@ -590,7 +631,7 @@ function showMailMergeReviewModal(templateVarsList, rows, columnMapping, filenam
     lines.push(`<div class="review-line ok">✓ 모든 변수에 값이 채워져 있습니다.</div>`);
   }
 
-  const fallbackCount = rows.filter((row) => !mmFilenameColumn || !String(row[mmFilenameColumn] || '').trim()).length;
+  const fallbackCount = rows.filter((row) => !mmFilenameColumn || !sanitizeFilename(row[mmFilenameColumn])).length;
   if (fallbackCount > 0) {
     lines.push(`<div class="review-line warn">⚠ 파일명 기준 컬럼 값이 비어 있어 행 번호로 이름 지어지는 행: ${fallbackCount}건</div>`);
   }
@@ -644,6 +685,18 @@ btnGenerateBatchEl.addEventListener('click', async () => {
     if (!outputDir) {
       log('저장이 취소되었습니다.', 'warn');
       return;
+    }
+
+    const existing = filenames.filter((name) => fs.existsSync(path.join(outputDir, name)));
+    if (existing.length > 0) {
+      const sample = existing.slice(0, 3).join(', ');
+      const ok = confirm(
+        `선택한 폴더에 이름이 같은 파일이 ${existing.length}개 있습니다 (${sample}${existing.length > 3 ? ' 등' : ''}).\n덮어쓸까요?`
+      );
+      if (!ok) {
+        log('기존 파일을 덮어쓰지 않도록 일괄 생성을 취소했습니다. 다른 폴더를 선택하세요.', 'warn');
+        return;
+      }
     }
 
     log(`일괄 생성을 시작합니다... (${mmDataRows.length}건, 형식: ${format.toUpperCase()})`);
