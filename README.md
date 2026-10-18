@@ -17,26 +17,30 @@ Electron + Node.js + JavaScript로 만든 데스크톱 프로그램입니다. �
 1. 이 저장소 페이지에서 **Code → Download ZIP**으로 압축 파일을 내려받습니다.
 2. 원하는 폴더에 압축을 풉니다.
 3. 압축 푼 폴더 안의 **`run.bat`** 파일을 더블클릭합니다.
-   - 최초 실행 시 필요한 패키지를 자동으로 설치합니다 (인터넷 연결 필요, 몇 분 정도 소요).
-   - 이후 실행부터는 이미 설치된 패키지를 빠르게 확인만 하고 바로 프로그램이 열립니다 (보통 몇 초 이내). 업데이트로 새 패키지가 추가된 경우에도 자동으로 함께 설치됩니다.
+   - 최초 실행 시 필요한 패키지와 프로그램 실행 엔진(Electron, 약 100MB)을 자동으로 내려받습니다 (인터넷 연결 필요, 몇 분 정도 소요).
+   - 이후 실행부터는 이미 설치된 패키지를 빠르게 확인만 하고 바로 프로그램이 열립니다 (보통 몇 초 이내). 업데이트로 새 패키지나 새 실행 엔진 버전이 필요해진 경우에도 자동으로 함께 설치됩니다.
    - 인터넷 연결이 없는 상태에서 실행하면, 이미 설치되어 있던 패키지 그대로 프로그램을 계속 엽니다.
 
-> **사전 준비**: PC에 [Node.js](https://nodejs.org/) (LTS 버전)가 설치되어 있어야 합니다. `run.bat` 실행 시 Node.js가 없으면 안내 메시지가 표시됩니다.
+> **사전 준비**: PC에 [Node.js](https://nodejs.org/) **22.12 이상** (LTS 버전 권장)이 설치되어 있어야 합니다. `run.bat` 실행 시 Node.js가 없거나 버전이 낮으면 안내 메시지가 표시됩니다.
+>
+> **지원 운영체제**: Windows 10/11 64비트, macOS 13 이상, 64비트 Linux. (실행 엔진 Electron 44가 32비트 Windows와 macOS 12 이하를 지원하지 않습니다.)
 
 ## macOS / Linux에서 실행하기
 
-`run.bat`은 Windows 전용입니다. macOS/Linux에서는 터미널에서 프로젝트 폴더로 이동한 뒤 아래 명령을 실행하세요.
+`run.bat`은 Windows 전용입니다. macOS/Linux에서는 터미널에서 프로젝트 폴더로 이동한 뒤 아래 명령을 실행하세요 (Node.js 22.12 이상 필요).
 
 ```bash
 npm install
+node node_modules/electron/install.js   # 실행 엔진 내려받기 (이미 있으면 바로 끝남)
 npm start
 ```
 
 ## 개발자용 명령어
 
 ```bash
-npm install   # 의존성 설치
-npm start     # 앱 실행 (electron .)
+npm install                             # 의존성 설치
+node node_modules/electron/install.js   # Electron 실행 파일 내려받기 (Electron 42부터 npm install이 자동으로 받지 않음)
+npm start                               # 앱 실행 (electron .)
 ```
 
 ## 지원 파일 형식

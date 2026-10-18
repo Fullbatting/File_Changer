@@ -2,7 +2,7 @@
 // 탭1(문서 양식 변환기)/탭2(메일머지)가 공통으로 쓰는 유틸·캐시·동의어 사전·
 // 헤더 자동 감지·컬럼 자동 매핑 로직. 두 탭 모두 이 모듈을 require 하여 쓴다.
 
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, webUtils } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const XLSX = require('xlsx');
@@ -429,7 +429,8 @@ function bindDropzone(zoneEl, fileNameEl, filters, onFileSelected) {
     try {
       const files = e.dataTransfer.files;
       if (!files || files.length === 0) return;
-      const filePath = files[0].path;
+      // Electron 32부터 File.path가 없어져 webUtils로 실제 경로를 얻는다
+      const filePath = webUtils.getPathForFile(files[0]);
       if (!filePath) {
         throw new Error('드래그된 파일의 경로를 확인할 수 없습니다.');
       }
