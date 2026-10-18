@@ -16,11 +16,21 @@ const { readHwpTables, cellsToRows } = require('./hwp-reader.js');
 
 const logArea = document.getElementById('logArea');
 
+let logScrollPending = false;
+
 function log(message, level = 'info') {
   const time = new Date().toLocaleTimeString('ko-KR', { hour12: false });
   const prefix = { info: 'INFO', ok: ' OK ', warn: 'WARN', error: 'FAIL' }[level] || 'INFO';
-  logArea.value += `[${time}] [${prefix}] ${message}\n`;
-  logArea.scrollTop = logArea.scrollHeight;
+  // value +=는 로그 전체를 다시 배치하므로 끝에 덧붙이기만 한다
+  const end = logArea.value.length;
+  logArea.setRangeText(`[${time}] [${prefix}] ${message}\n`, end, end, 'end');
+  // 맨 아래로 스크롤은 다음 화면 갱신 때 한 번만(바로 scrollHeight를 읽으면 강제 레이아웃이 생긴다)
+  if (logScrollPending) return;
+  logScrollPending = true;
+  requestAnimationFrame(() => {
+    logScrollPending = false;
+    logArea.scrollTop = logArea.scrollHeight;
+  });
 }
 
 function notifyError(context, err) {
@@ -169,6 +179,48 @@ function confirmModal(modalEl, proceedBtn, cancelBtn) {
     modalEl.onclick = (e) => {
       if (e.target === modalEl) cancelBtn.click();
     };
+  });
+}
+
+/**
+ * 앱 안의 확인 창(index.html의 #appConfirmModal). 네이티브 confirm()과 달리 제목·설명·
+ * 목록을 보여줄 수 있고 화면 스타일과 같다. 내용은 모두 textContent로 넣는다.
+ * { title, message, items: [문자열], note, okText, cancelText, danger } → Promise<boolean>
+ */
+function showConfirmDialog({ title, message, items = [], note = '', okText = '확인', cancelText = '취소', danger = false }) {
+  const modalEl = document.getElementById('appConfirmModal');
+  const okBtn = document.getElementById('appConfirmOk');
+  const cancelBtn = document.getElementById('appConfirmCancel');
+  document.getElementById('appConfirmTitle').textContent = title || '';
+  document.getElementById('appConfirmMessage').textContent = message || '';
+  const list = document.getElementById('appConfirmItems');
+  list.innerHTML = '';
+  items.forEach((text) => {
+    const li = document.createElement('li');
+    li.textContent = text;
+    list.appendChild(li);
+  });
+  list.hidden = items.length === 0;
+  const noteEl = document.getElementById('appConfirmNote');
+  noteEl.textContent = note;
+  noteEl.hidden = !note;
+  okBtn.textContent = okText;
+  cancelBtn.textContent = cancelText;
+  okBtn.classList.toggle('danger', danger);
+  okBtn.classList.toggle('primary', !danger);
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelBtn.click();
+    }
+  };
+  document.addEventListener('keydown', onKey, true);
+  const result = confirmModal(modalEl, okBtn, cancelBtn);
+  okBtn.focus();
+  return result.then((ok) => {
+    document.removeEventListener('keydown', onKey, true);
+    return ok;
   });
 }
 
@@ -625,20 +677,23 @@ function readSheetTable(filePath, sheetName, { displayText = false } = {}) {
   });
   if (columns.length === 0) throw new Error(`"${targetSheetName}" 시트에서 헤더(컬럼명) 행을 찾을 수 없습니다.`);
 
-  const rows = grid
-    .slice(headerRowIndex + 1)
-    .map((r) => {
-      const obj = {};
-      columns.forEach(({ key, index }) => {
-        obj[key] = r[index] === undefined ? '' : r[index];
-      });
-      return obj;
-    })
-    .filter((obj) => Object.values(obj).some((v) => v !== ''));
-
-  // 컬럼별 원본 숫자 표시 형식(%, 통화, 천 단위 등). 변환 결과 엑셀에서 0.15가 "15%"로 보이도록 넘겨준다.
+  // rowNumbers[i]: rows[i]가 원본에서 몇 번째 행이었는지(1부터). 엑셀·CSV는 시트의 실제 행 번호,
+  // 한글 문서 표는 표 안의 행 번호다. 빈 행을 걸러낸 뒤에도 맞도록 거르기 전에 함께 기록한다.
   const sheet = workbook.Sheets[targetSheetName];
   const start = XLSX.utils.decode_range(sheet['!ref']).s;
+  const rows = [];
+  const rowNumbers = [];
+  grid.slice(headerRowIndex + 1).forEach((r, i) => {
+    const obj = {};
+    columns.forEach(({ key, index }) => {
+      obj[key] = r[index] === undefined ? '' : r[index];
+    });
+    if (!Object.values(obj).some((v) => v !== '')) return;
+    rows.push(obj);
+    rowNumbers.push(start.r + headerRowIndex + 1 + i + 1);
+  });
+
+  // 컬럼별 원본 숫자 표시 형식(%, 통화, 천 단위 등). 변환 결과 엑셀에서 0.15가 "15%"로 보이도록 넘겨준다.
   const numberFormats = {};
   columns.forEach(({ key, index }) => {
     for (let r = headerRowIndex + 1; r < grid.length; r++) {
@@ -650,7 +705,7 @@ function readSheetTable(filePath, sheetName, { displayText = false } = {}) {
     }
   });
 
-  return { headers: columns.map((c) => c.key), labels: columns.map((c) => c.label), headerRowIndex, rows, numberFormats };
+  return { headers: columns.map((c) => c.key), labels: columns.map((c) => c.label), headerRowIndex, rows, rowNumbers, numberFormats };
 }
 
 /** 헤더 정보만 필요할 때: { headers, labels, headerRowIndex } */
@@ -736,6 +791,7 @@ const JAMO_FUZZY_MAX_RATIO = 0.3; // 음절 단위(0.34)보다 더 엄격하게 
  *   다시 계산한다("성명"↔"승명"처럼 음절 1개 중 자모 1개만 다른 한글 오타를
  *   잡아낸다). 한글이 아닌 이름은 자모 분해가 원문 그대로 통과되므로 3순위와
  *   동일한 결과가 나와 새로 매칭되는 일이 없다.
+ * 반환값의 candidates에는 모호해서 연결하지 않은 경우의 동률 후보를 담는다(화면에서 고를 수 있게).
  * 모든 단계에서 후보가 여러 개 동률이면 모호하므로 매칭하지 않는다 — 잘못
  * 자동 매핑되어 데이터가 다른 컬럼에 들어가는 것이 매핑이 안 되는 것보다
  * 더 나쁘다. usedHeadersA에 담긴 컬럼은 이미 다른 B 컬럼에 매칭되었으므로
@@ -747,17 +803,17 @@ function findAutoMatch(bCol, headersA, usedHeadersA) {
   const available = headersA.filter((a) => !usedHeadersA.has(a));
 
   const exact = available.find((a) => normalize(a) === bNorm);
-  if (exact) return { match: exact, reason: 'exact' };
+  if (exact) return { match: exact, reason: 'exact', candidates: [] };
 
   const group = synonymGroups.find((g) => g.some((term) => normalize(term) === bNorm));
   if (group) {
     const groupNormSet = new Set(group.map(normalize));
     const synonymCandidates = available.filter((a) => groupNormSet.has(normalize(a)));
     if (synonymCandidates.length === 1) {
-      return { match: synonymCandidates[0], reason: 'synonym' };
+      return { match: synonymCandidates[0], reason: 'synonym', candidates: [] };
     }
     if (synonymCandidates.length > 1) {
-      return { match: null, reason: null }; // 동의어 사전상으로도 모호함
+      return { match: null, reason: null, candidates: synonymCandidates }; // 동의어 사전상으로도 모호함
     }
     // 0건이면 이 사전 그룹에 해당하는 이름이 데이터에 없는 것뿐이므로 퍼지 매칭을 계속 시도
   }
@@ -773,8 +829,11 @@ function findAutoMatch(bCol, headersA, usedHeadersA) {
     .sort((x, y) => x.dist - y.dist);
 
   if (candidates.length > 0 && (candidates.length === 1 || candidates[0].dist < candidates[1].dist)) {
-    return { match: candidates[0].a, reason: 'fuzzy' };
+    return { match: candidates[0].a, reason: 'fuzzy', candidates: [] };
   }
+  // 가장 가까운 후보가 동률이면 모호하다 — 연결은 하지 않되 화면에서 고를 수 있게 후보를 함께 돌려준다
+  const tiedOf = (list) => (list.length > 1 ? list.filter((c) => c.dist === list[0].dist).map((c) => c.a) : []);
+  const syllableTie = tiedOf(candidates);
 
   const bJamo = decomposeHangulToJamo(bNorm);
   const jamoCandidates = available
@@ -788,10 +847,140 @@ function findAutoMatch(bCol, headersA, usedHeadersA) {
     .sort((x, y) => x.dist - y.dist);
 
   if (jamoCandidates.length > 0 && (jamoCandidates.length === 1 || jamoCandidates[0].dist < jamoCandidates[1].dist)) {
-    return { match: jamoCandidates[0].a, reason: 'fuzzy' };
+    return { match: jamoCandidates[0].a, reason: 'fuzzy', candidates: [] };
   }
 
-  return { match: null, reason: null };
+  return { match: null, reason: null, candidates: syllableTie.length > 0 ? syllableTie : tiedOf(jamoCandidates) };
+}
+
+/* -------------------------------------------------------------------------
+ * 원본 컬럼 고르기 도우미 (매핑 작업대의 검색·추천)
+ * 컬럼이 수십 개일 때 원하는 컬럼을 빨리 찾도록, 이름·초성·값으로 찾고 "이름이
+ * 비슷한 정도 + 값 모양"으로 추천 순서를 매긴다. AI 없이 규칙으로만 계산한다.
+ * ------------------------------------------------------------------------- */
+
+/** 한글 음절을 초성으로 바꾼다("연락처" → "ㅇㄹㅊ"). 한글이 아닌 문자는 그대로 둔다 */
+function getChoseong(str) {
+  let result = '';
+  for (const ch of String(str)) {
+    const code = ch.codePointAt(0);
+    if (code >= HANGUL_SYLLABLE_BASE && code <= HANGUL_SYLLABLE_LAST) {
+      result += HANGUL_CHOSEONG[Math.floor((code - HANGUL_SYLLABLE_BASE) / (21 * 28))];
+    } else {
+      result += ch;
+    }
+  }
+  return result;
+}
+
+/**
+ * 컬럼 하나가 검색어에 맞는지: 이름에 포함 / 검색어가 초성만으로 되어 있으면 이름의
+ * 초성에 포함 / 값(values, 앞 몇 행) 중 하나에 포함.
+ */
+function matchesColumnSearch(query, name, values) {
+  const q = normalizeFieldName(query || '');
+  if (!q) return true;
+  const nameNorm = normalizeFieldName(name);
+  if (nameNorm.includes(q)) return true;
+  if (/^[ㄱ-ㅎ]+$/.test(q) && getChoseong(nameNorm).includes(q)) return true;
+  const raw = String(query).trim().toLowerCase();
+  return (values || []).some((v) => formatPreviewValue(v).toLowerCase().includes(raw));
+}
+
+const VALUE_KIND_LABELS = {
+  phone: '전화번호',
+  email: '메일 주소',
+  date: '날짜',
+  rrn: '주민번호',
+  zip: '우편번호',
+  number: '숫자',
+};
+
+function classifyValue(v) {
+  if (v instanceof Date) return 'date';
+  if (typeof v === 'number') return Number.isFinite(v) ? 'number' : null;
+  const s = String(v).trim();
+  if (/^\d{4}[-./]\d{1,2}[-./]\d{1,2}/.test(s)) return 'date';
+  if (/^\d{6}-?[1-4*][\d*]{0,6}$/.test(s) && s.length >= 8) return 'rrn';
+  if (/^0\d{1,2}-?\d{3,4}-?\d{4}$/.test(s)) return 'phone';
+  if (/^[^@\s]+@[^@\s]+$/.test(s)) return 'email';
+  if (/^\d{5}$/.test(s)) return 'zip';
+  if (/^-?[\d,]+(\.\d+)?$/.test(s)) return 'number';
+  return null;
+}
+
+/** 값 목록(앞 몇 행)의 모양을 추정한다. 빈 값을 뺀 80% 이상이 같은 모양일 때만 그 종류를 돌려준다 */
+function detectValueKind(values) {
+  const nonEmpty = (values || []).filter((v) => v !== '' && v !== null && v !== undefined).slice(0, 20);
+  if (nonEmpty.length === 0) return null;
+  const counts = {};
+  nonEmpty.forEach((v) => {
+    const k = classifyValue(v);
+    if (k) counts[k] = (counts[k] || 0) + 1;
+  });
+  const best = Object.entries(counts).sort((x, y) => y[1] - x[1])[0];
+  return best && best[1] / nonEmpty.length >= 0.8 ? best[0] : null;
+}
+
+/** 타겟 컬럼 이름에서 들어갈 값의 종류를 추정한다("연락처" → 전화번호) */
+function guessKindFromName(name) {
+  const n = normalizeFieldName(name);
+  if (/주민/.test(n)) return 'rrn';
+  if (/(연락처|전화|휴대|핸드폰|폰|tel|phone|mobile)/.test(n)) return 'phone';
+  if (/(메일|email|e-mail|전자우편)/.test(n)) return 'email';
+  if (/우편/.test(n)) return 'zip';
+  if (/(일자|날짜|생년월일|생일|일시|date)$|일$/.test(n)) return 'date';
+  if (/(금액|급여|수당|급$|액$|료$|비$|수량|점수|단가|가격|합계|price|amount|qty)/.test(n)) return 'number';
+  return null;
+}
+
+/**
+ * bName(타겟 컬럼)에 연결할 원본 컬럼 후보를 점수순으로 돌려준다: [{ a, score, reasons }].
+ * - 이름: 같음 100 · 동의어 90 · 한쪽이 다른 쪽을 포함 55 · 비슷함(음절/자모 유사도 0.5 이상) 최대 60
+ * - 값 모양: 타겟 이름에서 추정한 종류와 원본 값의 종류가 같으면 +40
+ * valueKindByA: { [원본 컬럼]: detectValueKind 결과 }. 점수가 0인 후보는 뺀다. 동점이면 원본 순서.
+ */
+function rankSourceCandidates(bName, headersA, valueKindByA = {}) {
+  const bNorm = normalizeFieldName(bName);
+  const bJamo = decomposeHangulToJamo(bNorm);
+  const bKind = guessKindFromName(bName);
+  const group = synonymGroups.find((g) => g.some((term) => normalizeFieldName(term) === bNorm));
+  const groupNormSet = group ? new Set(group.map(normalizeFieldName)) : null;
+
+  return headersA
+    .map((a, index) => {
+      const aNorm = normalizeFieldName(a);
+      const reasons = [];
+      let score = 0;
+      if (aNorm === bNorm) {
+        score = 100;
+        reasons.push('이름 같음');
+      } else if (groupNormSet && groupNormSet.has(aNorm)) {
+        score = 90;
+        reasons.push('동의어');
+      } else if (aNorm.length >= 2 && bNorm.length >= 2 && (aNorm.includes(bNorm) || bNorm.includes(aNorm))) {
+        score = 55;
+        reasons.push('이름 일부 같음');
+      } else {
+        const aJamo = decomposeHangulToJamo(aNorm);
+        const sim = Math.max(
+          1 - levenshteinDistance(aNorm, bNorm) / Math.max(aNorm.length, bNorm.length, 1),
+          1 - levenshteinDistance(aJamo, bJamo) / Math.max(aJamo.length, bJamo.length, 1)
+        );
+        if (sim >= 0.5) {
+          score = Math.round(sim * 60);
+          reasons.push('이름 비슷');
+        }
+      }
+      if (bKind && valueKindByA[a] === bKind) {
+        score += 40;
+        reasons.push(`값: ${VALUE_KIND_LABELS[bKind]}`);
+      }
+      return { a, score, reasons, index };
+    })
+    .filter((c) => c.score > 0)
+    .sort((x, y) => y.score - x.score || x.index - y.index)
+    .map(({ a, score, reasons }) => ({ a, score, reasons }));
 }
 
 /**
@@ -976,6 +1165,7 @@ module.exports = {
   getFileMtimeMs,
   evictOldestIfFull,
   confirmModal,
+  showConfirmDialog,
   readWorkbookSmart,
   getHwpxSectionNames,
   DATA_FILE_FILTERS,
@@ -991,6 +1181,12 @@ module.exports = {
   levenshteinDistance,
   decomposeHangulToJamo,
   findAutoMatch,
+  getChoseong,
+  matchesColumnSearch,
+  detectValueKind,
+  guessKindFromName,
+  rankSourceCandidates,
+  VALUE_KIND_LABELS,
   xmlEscape,
   formatPreviewValue,
   getUserDataPath,

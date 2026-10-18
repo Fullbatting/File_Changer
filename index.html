@@ -52,27 +52,11 @@
         </div>
       </div>
 
-      <div class="card">
-        <h2><span class="step-badge">2</span>컬럼 매핑 테이블</h2>
-        <p class="desc">타겟(B) 파일의 각 컬럼에 대응할 원본(A) 파일의 컬럼을 선택하세요.</p>
+      <div class="card" id="workbenchCard">
+        <h2><span class="step-badge">2</span>매핑 작업대</h2>
+        <p class="desc">원본(A) 컬럼과 타겟(B) 컬럼의 연결을 확인하고, 저장될 결과를 미리 보며 값을 직접 고칠 수 있습니다. 모든 조작은 실행 취소(Ctrl+Z)로 되돌릴 수 있고, 원본 파일은 바뀌지 않습니다.</p>
 
-        <div class="table-wrap">
-          <table class="mapping-table" id="mappingTable">
-            <thead>
-              <tr>
-                <th style="width:24%;">타겟(B) 컬럼</th>
-                <th style="width:30%;">원본(A) 컬럼 매핑</th>
-                <th style="width:31%;" title="선택된 원본(A) 컬럼의 실제 값(앞 2행)을 보여줍니다.">미리보기</th>
-                <th style="width:15%;" title="체크하면 이 컬럼이 비어 있는 행을 저장 전 검증 단계에서 알려줍니다.">필수</th>
-              </tr>
-            </thead>
-            <tbody id="mappingTableBody">
-              <tr><td colspan="4" class="empty-hint">먼저 [구조 분석]을 실행하세요.</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="preset-row" style="margin-top:14px;">
+        <div class="preset-row">
           <label for="presetSelect">저장된 프리셋</label>
           <select id="presetSelect">
             <option value="">-- 새 프리셋 --</option>
@@ -80,7 +64,34 @@
           <button id="btnSavePreset" class="btn primary">⭐ 프리셋으로 저장</button>
           <button id="btnDeletePreset" class="btn ghost">🗑️ 프리셋 삭제</button>
         </div>
-        <p class="desc" style="margin-top:6px;">프리셋은 이 PC에 저장되어 다음 실행 시에도 이름으로 바로 불러올 수 있습니다. 같은 프리셋을 다시 저장하면 내용이 수정됩니다.</p>
+        <p class="desc" style="margin-top:6px;">프리셋은 이 PC에 저장되어 다음 실행 시에도 이름으로 바로 불러올 수 있습니다. 같은 프리셋을 다시 저장하면 내용이 수정됩니다. 연결과 필수 여부만 저장되고, 직접 고친 값은 저장되지 않습니다.</p>
+
+        <div id="wbEmpty" class="empty-hint wb-empty">먼저 [구조 분석]을 실행하세요.</div>
+        <div id="wbMain" class="wb" hidden>
+          <div id="wbBanner" class="wb-banner" hidden></div>
+          <div id="wbSummary" class="wb-summary" role="toolbar" aria-label="매핑 요약"></div>
+          <div id="wbConnect" class="wb-connect"></div>
+          <div id="wbListView" class="wb-listview" hidden>
+            <div class="table-wrap">
+              <table class="mapping-table" id="mappingTable">
+                <thead>
+                  <tr>
+                    <th style="width:18%;">타겟(B) 컬럼</th>
+                    <th style="width:16%;">연결 이유</th>
+                    <th style="width:24%;">원본(A) 컬럼</th>
+                    <th style="width:28%;" title="선택된 원본(A) 컬럼의 실제 값(앞 2행)을 보여줍니다.">미리보기</th>
+                    <th style="width:8%;" title="체크하면 이 컬럼이 비어 있는 행을 알려줍니다.">필수</th>
+                    <th style="width:6%;"><span class="visually-hidden">연결 끊기</span></th>
+                  </tr>
+                </thead>
+                <tbody id="mappingTableBody">
+                  <tr><td colspan="6" class="empty-hint">먼저 [구조 분석]을 실행하세요.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <section id="wbPreview" class="wb-preview" aria-label="결과 미리보기"></section>
+        </div>
 
         <hr class="card-divider" />
 
@@ -93,7 +104,7 @@
 
       <div class="card">
         <h2><span class="step-badge">3</span>변환 및 저장</h2>
-        <p class="desc">매핑 규칙에 따라 A 파일 데이터를 B 파일 구조로 재구성합니다. 저장 전에 검증 결과와 미리보기를 확인할 수 있습니다.</p>
+        <p class="desc" id="convertDesc">매핑 작업대의 결과 미리보기와 똑같은 표를 서식이 적용된 엑셀(.xlsx)로 저장합니다.</p>
         <div class="btn-row">
           <button id="btnConvert" class="btn primary">⚙️ 변환 실행 및 저장</button>
         </div>
@@ -220,15 +231,9 @@
 
   <!-- 변환 결과 확인(검증 + 미리보기) 모달 -->
   <div id="convertReviewModal" class="modal-overlay" hidden>
-    <div class="modal-card modal-card-wide">
-      <h3>변환 결과 확인</h3>
+    <div class="modal-card modal-card-wide" role="dialog" aria-labelledby="convertReviewTitle">
+      <h3 id="convertReviewTitle">이대로 변환할까요?</h3>
       <div id="convertReviewSummary" class="review-summary"></div>
-      <div class="table-wrap review-preview-wrap">
-        <table class="mapping-table">
-          <thead><tr id="convertReviewTableHead"></tr></thead>
-          <tbody id="convertReviewTableBody"></tbody>
-        </table>
-      </div>
       <div class="btn-row modal-btn-row">
         <button id="convertReviewCancel" class="btn ghost">취소하고 수정</button>
         <button id="convertReviewProceed" class="btn primary">그대로 저장</button>
@@ -250,6 +255,20 @@
       <div class="btn-row modal-btn-row">
         <button id="mailMergeReviewCancel" class="btn ghost">취소하고 수정</button>
         <button id="mailMergeReviewProceed" class="btn primary">그대로 생성</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 앱 공통 확인 창 (연결 변경·파일 변경·일괄 처리 등) -->
+  <div id="appConfirmModal" class="modal-overlay" hidden>
+    <div class="modal-card" role="alertdialog" aria-labelledby="appConfirmTitle" aria-describedby="appConfirmMessage">
+      <h3 id="appConfirmTitle"></h3>
+      <p id="appConfirmMessage" class="confirm-message"></p>
+      <ul id="appConfirmItems" class="confirm-items" hidden></ul>
+      <p id="appConfirmNote" class="confirm-note" hidden></p>
+      <div class="btn-row modal-btn-row">
+        <button id="appConfirmCancel" class="btn ghost">취소</button>
+        <button id="appConfirmOk" class="btn primary">확인</button>
       </div>
     </div>
   </div>
