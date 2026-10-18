@@ -1518,60 +1518,113 @@ function createWorkbench(api) {
 
     const active = ui.preview.active;
 
-    // 머리글
-    pvHead.innerHTML = '';
-    ui.preview.thByB = new Map();
-    const headRow = el('tr', {}, el('th', { className: 'wb-rownum sticky', style: `left:0;width:${ROWNUM_W}px`, text: '원본 행' }));
-    cols.pinned.forEach((b, k) => headRow.appendChild(buildHeaderCell(b, derived, { left: ROWNUM_W + k * COL_W, edge: k === cols.pinned.length - 1 })));
-    if (leftSpace > 0) headRow.appendChild(el('th', { className: 'wb-spacer-cell', style: `width:${leftSpace}px` }));
-    shownScroll.forEach((b) => headRow.appendChild(buildHeaderCell(b, derived, null)));
-    if (rightSpace > 0) headRow.appendChild(el('th', { className: 'wb-spacer-cell', style: `width:${rightSpace}px` }));
-    pvHead.appendChild(headRow);
+    // 머리글: 열 구성과 열 상태가 그대로면 다시 만들지 않는다
+    const headSig = [cols.pinned.join('|'), shownScroll.join('|'), leftSpace, rightSpace, ...[...cols.pinned, ...shownScroll].map((b) => headerKey(b, derived))].join('#');
+    if (headSig !== ui.preview.headSig) {
+      ui.preview.headSig = headSig;
+      pvHead.innerHTML = '';
+      ui.preview.thByB = new Map();
+      const headRow = el('tr', {}, el('th', { className: 'wb-rownum sticky', style: `left:0;width:${ROWNUM_W}px`, text: '원본 행' }));
+      cols.pinned.forEach((b, k) => headRow.appendChild(buildHeaderCell(b, derived, { left: ROWNUM_W + k * COL_W, edge: k === cols.pinned.length - 1 })));
+      if (leftSpace > 0) headRow.appendChild(el('th', { className: 'wb-spacer-cell', style: `width:${leftSpace}px` }));
+      shownScroll.forEach((b) => headRow.appendChild(buildHeaderCell(b, derived, null)));
+      if (rightSpace > 0) headRow.appendChild(el('th', { className: 'wb-spacer-cell', style: `width:${rightSpace}px` }));
+      pvHead.appendChild(headRow);
+    }
 
-    // 본문
-    pvBody.innerHTML = '';
+    // 본문: 보이는 행·열이 지난번과 같으면 칸을 새로 만들지 않고 바뀐 칸만 고친다
+    // (연결 하나·값 하나를 바꿀 때마다 표 전체를 다시 만들면 레이아웃 비용이 커진다)
     const rowNumbers = st.source.rowNumbers;
-    pageRows.forEach((i) => {
-      const missing = derived.missingByRow[i];
+    const describeCell = (i, b, missing, pinnedLeft, edge) => {
+      const v = derived.value(i, b);
+      const isActive = active && active.i === i && active.b === b;
+      const edited = api.getOverride(i, b) !== undefined;
+      const isMissing = !!missing && missing.includes(b);
+      const classes = ['wb-cell'];
+      const align = api.cellAlign(v, b);
+      if (align) classes.push(align);
+      if (isMissing) classes.push('missing');
+      if (edited) classes.push('edited');
+      if (pinnedLeft !== null) classes.push('sticky');
+      if (edge) classes.push('pin-edge');
+      if (isActive) classes.push('active');
+      return {
+        className: classes.join(' '),
+        text: api.displayValue(v, b),
+        title: isMissing ? '필수 칸이 비어 있음' : edited ? '직접 고친 값' : '',
+        tabIndex: isActive ? 0 : -1,
+      };
+    };
+    const rowNumKey = (i, missing) => {
       const dupOf = derived.duplicateOf[i];
-      const rowNumCell = el('td', { className: 'wb-rownum sticky', style: `left:0` }, String(rowNumbers[i]));
+      const mark = dupOf >= 0 ? `dup:${dupOf}` : ui.preview.rowFilter && !missing ? 'resolved' : '';
+      return `${rowNumbers[i]}|${mark}|${missing ? 1 : 0}`;
+    };
+    const fillRowNum = (td, i, missing) => {
+      const dupOf = derived.duplicateOf[i];
+      td.className = 'wb-rownum sticky';
+      td.textContent = String(rowNumbers[i]);
+      td.title = '';
       if (dupOf >= 0) {
-        rowNumCell.classList.add('dup');
-        rowNumCell.title = `${rowNumbers[dupOf]}행과 모든 값이 같음`;
-        rowNumCell.append(el('span', { className: 'wb-dup', text: '중복' }));
+        td.classList.add('dup');
+        td.title = `${rowNumbers[dupOf]}행과 모든 값이 같음`;
+        td.append(el('span', { className: 'wb-dup', text: '중복' }));
       } else if (ui.preview.rowFilter && !missing) {
         // 필터를 켤 때는 문제였지만 지금은 빈칸·중복이 없는 행
-        rowNumCell.append(el('span', { className: 'wb-resolved', text: '해결' }));
+        td.append(el('span', { className: 'wb-resolved', text: '해결' }));
       }
-      if (missing) rowNumCell.classList.add('missing');
-      const tr = el('tr', { dataset: { r: String(i) } }, rowNumCell);
-      const cell = (b, pinnedLeft, edge) => {
-        const v = derived.value(i, b);
-        const text = api.displayValue(v, b);
-        const isActive = active && active.i === i && active.b === b;
-        const classes = ['wb-cell'];
-        const align = api.cellAlign(v, b);
-        if (align) classes.push(align);
-        if (missing && missing.includes(b)) classes.push('missing');
-        if (api.getOverride(i, b) !== undefined) classes.push('edited');
-        if (pinnedLeft !== null) classes.push('sticky');
-        if (edge) classes.push('pin-edge');
-        if (isActive) classes.push('active');
-        return el('td', {
-          className: classes.join(' '),
-          tabindex: isActive ? '0' : '-1',
-          style: pinnedLeft !== null ? `left:${pinnedLeft}px` : null,
-          dataset: { r: String(i), b },
-          title: missing && missing.includes(b) ? '필수 칸이 비어 있음' : api.getOverride(i, b) !== undefined ? '직접 고친 값' : null,
-          text,
+      if (missing) td.classList.add('missing');
+      td.dataset.key = rowNumKey(i, missing);
+    };
+    const columnsOfRow = [
+      ...cols.pinned.map((b, k) => [b, ROWNUM_W + k * COL_W, k === cols.pinned.length - 1]),
+      ...shownScroll.map((b) => [b, null, false]),
+    ];
+    const bodySig = [pageRows.join(','), cols.pinned.join('|'), shownScroll.join('|'), leftSpace, rightSpace].join('#');
+    if (bodySig === ui.preview.bodySig && pvBody.rows.length === pageRows.length) {
+      pageRows.forEach((i, ri) => {
+        const tr = pvBody.rows[ri];
+        const missing = derived.missingByRow[i];
+        const rowNumCell = tr.cells[0];
+        if (rowNumCell.dataset.key !== rowNumKey(i, missing)) fillRowNum(rowNumCell, i, missing);
+        const cells = tr.querySelectorAll('td.wb-cell');
+        columnsOfRow.forEach(([b, pinnedLeft, edge], ci) => {
+          const td = cells[ci];
+          const want = describeCell(i, b, missing, pinnedLeft, edge);
+          if (td.className !== want.className) td.className = want.className;
+          if (td.textContent !== want.text || td.childElementCount > 0) td.textContent = want.text;
+          if (td.title !== want.title) td.title = want.title;
+          if (td.tabIndex !== want.tabIndex) td.tabIndex = want.tabIndex;
         });
-      };
-      cols.pinned.forEach((b, k) => tr.appendChild(cell(b, ROWNUM_W + k * COL_W, k === cols.pinned.length - 1)));
-      if (leftSpace > 0) tr.appendChild(el('td', { className: 'wb-spacer-cell' }));
-      shownScroll.forEach((b) => tr.appendChild(cell(b, null, false)));
-      if (rightSpace > 0) tr.appendChild(el('td', { className: 'wb-spacer-cell' }));
-      pvBody.appendChild(tr);
-    });
+      });
+    } else {
+      ui.preview.bodySig = bodySig;
+      pvBody.innerHTML = '';
+      pageRows.forEach((i) => {
+        const missing = derived.missingByRow[i];
+        const rowNumCell = el('td', { style: 'left:0' });
+        fillRowNum(rowNumCell, i, missing);
+        const tr = el('tr', { dataset: { r: String(i) } }, rowNumCell);
+        const addCell = ([b, pinnedLeft, edge]) => {
+          const want = describeCell(i, b, missing, pinnedLeft, edge);
+          tr.appendChild(
+            el('td', {
+              className: want.className,
+              tabindex: String(want.tabIndex),
+              style: pinnedLeft !== null ? `left:${pinnedLeft}px` : null,
+              dataset: { r: String(i), b },
+              title: want.title || null,
+              text: want.text,
+            })
+          );
+        };
+        columnsOfRow.slice(0, cols.pinned.length).forEach(addCell);
+        if (leftSpace > 0) tr.appendChild(el('td', { className: 'wb-spacer-cell' }));
+        columnsOfRow.slice(cols.pinned.length).forEach(addCell);
+        if (rightSpace > 0) tr.appendChild(el('td', { className: 'wb-spacer-cell' }));
+        pvBody.appendChild(tr);
+      });
+    }
     // 키보드로 표에 들어올 수 있도록 활성 칸이 없으면 첫 칸을 탭 정지점으로
     if (!pvBody.querySelector('td[tabindex="0"]')) {
       const first = pvBody.querySelector('td.wb-cell');
@@ -1586,6 +1639,11 @@ function createWorkbench(api) {
 
     renderColMap(derived, cols);
     highlightPreviewColumn(ui.focusedB);
+  }
+
+  /** 머리글 칸 하나의 모양을 정하는 값들 — 같으면 다시 그리지 않는다 */
+  function headerKey(b, derived) {
+    return [api.labelOfB(b), st.mapping[b] || '', st.matchReason[b] || '', derived.columnStatus[b], st.required.has(b), ui.preview.pinned.has(b)].join('|');
   }
 
   function buildHeaderCell(b, derived, pin) {
@@ -1957,6 +2015,8 @@ function createWorkbench(api) {
     ui.preview.active = null;
     ui.preview.editing = null;
     ui.preview.range = null;
+    ui.preview.headSig = null;
+    ui.preview.bodySig = null;
     pvColSearch.value = '';
     ui.layout.rowsTop = 0;
     rowsScroller.scrollTop = 0;

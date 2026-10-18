@@ -198,14 +198,51 @@ function parseOverrideNumber(str) {
   return isSafeNumericString(plain) ? Number(plain) : null;
 }
 
-/** "YYYY-MM-DD" 또는 "YYYY-MM-DD HH:MM(:SS)"만 현지 시각 Date로. 그 외에는 null */
-function parseOverrideDate(str) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(String(str).trim());
+/**
+ * 날짜로 쓴 글자를 현지 시각 Date로 바꾼다. 아니면 null.
+ * 받는 형식: 2026-01-05 · 2026/1/5 · 2026.01.05 · "2026. 1. 5." · 2026년 1월 5일, 뒤에 시각 13:05 또는 13:05:30.
+ * 연도가 4자리여야 하고 실제로 있는 날짜여야 한다(2026-02-30은 날짜가 아님).
+ */
+const TEXT_DATE_PATTERN =
+  /^(\d{4})\s*(?:[-/.]\s*|년\s*)(\d{1,2})\s*(?:[-/.]\s*|월\s*)(\d{1,2})\s*(?:\.|일)?(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/;
+
+function parseTextDate(str) {
+  const m = TEXT_DATE_PATTERN.exec(String(str).trim());
   if (!m) return null;
-  const [y, mo, d, h = 0, mi = 0, s = 0] = m.slice(1).map((x) => (x === undefined ? 0 : Number(x)));
+  const [y, mo, d, h, mi, s] = m.slice(1).map((x) => (x === undefined ? 0 : Number(x)));
   const date = new Date(y, mo - 1, d, h, mi, s);
   if (date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d || h > 23 || mi > 59 || s > 59) return null;
   return date;
+}
+
+/** 직접 고친 값을 날짜 열에 넣을 때도 같은 형식을 받는다 */
+const parseOverrideDate = parseTextDate;
+
+/**
+ * 값이 모두 글자로 들어오는 원본(CSV, 한글 문서 표)에서 날짜 열을 실제 날짜로 바꾼다.
+ * 숫자 열 규칙과 같이 열 단위로 판정한다: 빈 값을 뺀 모든 값이 날짜 글자일 때만 그 열 전체를
+ * 바꾸고, 하나라도 날짜가 아니면 열 전체를 글자 그대로 둔다(일부 칸만 날짜가 되는 일이 없게).
+ * 바꾼 컬럼 이름 목록을 돌려준다.
+ */
+function convertTextDateColumns(table) {
+  const converted = [];
+  table.headers.forEach((a) => {
+    const parsed = [];
+    for (let i = 0; i < table.rows.length; i++) {
+      const v = table.rows[i][a];
+      if (isEmptyValue(v)) continue;
+      if (typeof v !== 'string') return;
+      const date = parseTextDate(v);
+      if (!date) return;
+      parsed.push([i, date]);
+    }
+    if (parsed.length === 0) return;
+    parsed.forEach(([i, date]) => {
+      table.rows[i][a] = date;
+    });
+    converted.push(a);
+  });
+  return converted;
 }
 
 /** 고친 값(글자)을 열 종류에 맞춰 저장할 값으로. 숫자·날짜로 볼 수 없으면 그 칸만 글자로 둔다 */
@@ -706,6 +743,12 @@ bindTab1File('B', dropB, fileNameB, sheetRowB, sheetSelectB);
 
 /** 원본 표에 화면용 정보(컬럼별 앞쪽 값, 값 모양, 값이 모두 빈 컬럼)를 붙인다 */
 function prepareSource(table, filePath) {
+  // CSV·한글 문서 표는 모든 값이 글자로 들어오므로 숫자 글자도 숫자로, 날짜 글자는 날짜로 본다
+  const numericText = ['.csv', '.hwp', '.hwpx', '.hwpt'].includes(path.extname(filePath).toLowerCase());
+  if (numericText) {
+    const dateColumns = convertTextDateColumns(table);
+    if (dateColumns.length > 0) log(`원본(A)의 날짜 글자 컬럼을 날짜로 읽었습니다: ${dateColumns.join(', ')}`);
+  }
   const samples = {};
   const valueKinds = {};
   const emptyColumns = new Set();
@@ -724,8 +767,7 @@ function prepareSource(table, filePath) {
     samples,
     valueKinds,
     emptyColumns,
-    // CSV·한글 문서 표는 모든 값이 글자로 들어오므로 숫자 글자도 숫자로 본다
-    numericText: ['.csv', '.hwp', '.hwpx', '.hwpt'].includes(path.extname(filePath).toLowerCase()),
+    numericText,
   };
 }
 
