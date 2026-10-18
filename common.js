@@ -339,10 +339,15 @@ function readWorkbookSmart(filePath) {
   } else if (ext === '.csv') {
     const buffer = safeReadFileSync(filePath);
     const text = decodeCsvBuffer(buffer);
-    workbook = XLSX.read(text, { type: 'string', raw: false });
+    // raw:true — CSV 글자를 숫자/날짜로 추측 변환하지 않는다. 변환하면 전화번호
+    // "01012345678"·우편번호 "03187"의 앞자리 0이 사라지고 "2026-01-15"가 날짜
+    // 일련번호(46037)로 바뀐다.
+    workbook = XLSX.read(text, { type: 'string', raw: true });
   } else {
     const buffer = safeReadFileSync(filePath);
-    workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    // 날짜는 cellDates 대신 readCellValue에서 직접 푼다(이유는 그 함수 설명 참고). cellNF는 셀의
+    // 표시 형식(z)을 남겨 날짜 셀·앞자리 0 채움 셀을 알아보기 위해 필요하다.
+    workbook = XLSX.read(buffer, { type: 'buffer', cellNF: true });
   }
 
   evictOldestIfFull(workbookCache, WORKBOOK_CACHE_LIMIT);
@@ -520,27 +525,137 @@ function detectHeaderRowIndex(rawRows) {
 }
 
 /**
- * 엑셀/CSV 파일의 지정된 시트에서 헤더 행을 자동으로 찾아 배열로 추출한다.
- * { headers, headerRowIndex } 를 반환하며, headerRowIndex는 변환 시 데이터
- * 행을 정확히 그 아래부터 읽기 위해 호출한 쪽에서 보관해 두어야 한다.
+ * 셀 하나의 값을 읽는다.
+ * - 날짜 셀은 SheetJS의 Date 자동 변환(cellDates) 대신 일련번호를 연/월/일/시/분/초로
+ *   직접 풀어 "현지 시각"의 Date로 만든다. cellDates는 1899년 기준 시각을 현지
+ *   시간대로 계산하는데, 서울처럼 그 무렵 표준시(LMT)가 지금과 달랐던 지역에서는
+ *   몇십 초가 어긋나 날짜가 전날로 읽힌다(2026-01-15 → 2026-01-14 23:59:08).
+ *   시각만 있는 셀(일련번호 1 미만)은 "HH:MM" 글자로 돌려준다.
+ * - "00000"처럼 앞자리 0을 채워 보이게 한 숫자 셀(우편번호 등)은 보이는 글자 그대로.
+ * - displayText면 숫자도 엑셀 화면에 보이는 글자(천 단위 구분·%·통화 기호) 그대로 —
+ *   메일머지 문서에는 0.15가 아니라 "15%"가 들어가야 하기 때문이다.
  */
-function extractHeaders(filePath, sheetName) {
+function readCellValue(cell, displayText) {
+  if (!cell || cell.v === undefined || cell.v === null) return '';
+  if (cell.t === 'e') return cell.w || '';
+  if (cell.t === 'd' && cell.v instanceof Date) return cell.v;
+  if (cell.t === 'n') {
+    const format = typeof cell.z === 'string' ? cell.z : '';
+    if (format && XLSX.SSF.is_date(format)) {
+      const p = XLSX.SSF.parse_date_code(cell.v);
+      if (p) {
+        const pad = (n) => String(n).padStart(2, '0');
+        if (cell.v < 1) return `${pad(p.H)}:${pad(p.M)}${p.S ? `:${pad(p.S)}` : ''}`;
+        return new Date(p.y, p.m - 1, p.d, p.H, p.M, p.S);
+      }
+    }
+    if (cell.w !== undefined && (displayText || /^0+$/.test(format))) return cell.w;
+  }
+  return cell.v;
+}
+
+/**
+ * 시트를 2차원 배열로 읽는다. 행/열 번호는 시트의 사용 범위(!ref) 시작점 기준이다 —
+ * 표가 A1이 아니라 B2 같은 곳에서 시작해도 헤더 찾기와 데이터 읽기가 같은 배열을
+ * 쓰므로 어긋나지 않는다. 서식만 남은 먼 빈 칸 때문에 범위가 쓸데없이 커지지 않도록
+ * 실제 값이 있는 마지막 행/열까지만 읽는다. 세로 병합 셀은 한글 문서 표와 같은 규칙
+ * (cellsToRows 설명 참고)으로 아래 칸까지 값을 채운다.
+ */
+function sheetToGrid(sheet, displayText) {
+  if (!sheet || !sheet['!ref']) return [];
+  const start = XLSX.utils.decode_range(sheet['!ref']).s;
+  let lastRow = start.r - 1;
+  let lastCol = start.c - 1;
+  Object.keys(sheet).forEach((key) => {
+    if (key[0] === '!') return;
+    const v = sheet[key] && sheet[key].v;
+    if (v === undefined || v === null || v === '') return;
+    const addr = XLSX.utils.decode_cell(key);
+    if (addr.r > lastRow) lastRow = addr.r;
+    if (addr.c > lastCol) lastCol = addr.c;
+  });
+
+  const grid = [];
+  for (let r = start.r; r <= lastRow; r++) {
+    const row = [];
+    for (let c = start.c; c <= lastCol; c++) row.push(readCellValue(sheet[XLSX.utils.encode_cell({ r, c })], displayText));
+    grid.push(row);
+  }
+
+  (sheet['!merges'] || []).forEach(({ s, e }) => {
+    const col = s.c - start.c;
+    const top = grid[s.r - start.r];
+    if (!top || col < 0 || col >= top.length) return;
+    for (let r = s.r + 1; r <= e.r; r++) {
+      const row = grid[r - start.r];
+      if (row) row[col] = top[col];
+    }
+  });
+  return grid;
+}
+
+/**
+ * 시트에서 헤더 행을 자동으로 찾고, 그 아래 행들을 { 컬럼키: 값 } 객체로 읽는다.
+ * 헤더와 데이터를 같은 2차원 배열(sheetToGrid)에서 열 번호로 짝지으므로, 헤더 칸의
+ * 앞뒤 공백("이름 ")이나 같은 이름의 컬럼이 둘 있어도 값이 엉뚱한 컬럼으로 가지 않는다.
+ * - headers: 컬럼키. 같은 이름이 또 나오면 "비고_1", "비고_2"처럼 구분한다.
+ * - labels: 화면/결과 파일에 보일 원래 이름(공백만 정리).
+ * - rows: 매핑된 컬럼 값이 모두 빈 행은 뺀다.
+ */
+function readSheetTable(filePath, sheetName, { displayText = false } = {}) {
   const workbook = readWorkbookSmart(filePath);
   const targetSheetName = sheetName || workbook.SheetNames[0];
   if (!targetSheetName || !workbook.Sheets[targetSheetName]) {
     throw new Error(`시트를 찾을 수 없습니다${sheetName ? ` (${sheetName})` : ''}.`);
   }
-  const sheet = workbook.Sheets[targetSheetName];
-  // blankrows:false를 쓰지 않는다 — 빈 행을 걸러내면 배열 인덱스가 실제 시트
-  // 행 번호와 어긋나서, 아래에서 구한 headerRowIndex를 이후 데이터 읽기(range)에
-  // 그대로 재사용할 수 없게 된다.
-  const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-  if (!rawRows || rawRows.length === 0) throw new Error(`"${targetSheetName}" 시트에 데이터가 비어 있습니다.`);
+  const grid = sheetToGrid(workbook.Sheets[targetSheetName], displayText);
+  if (grid.length === 0) throw new Error(`"${targetSheetName}" 시트에 데이터가 비어 있습니다.`);
 
-  const headerRowIndex = detectHeaderRowIndex(rawRows);
-  const headerRow = rawRows[headerRowIndex].map((h) => String(h).trim()).filter((h) => h !== '');
-  if (headerRow.length === 0) throw new Error(`"${targetSheetName}" 시트에서 헤더(컬럼명) 행을 찾을 수 없습니다.`);
-  return { headers: headerRow, headerRowIndex };
+  const headerRowIndex = detectHeaderRowIndex(grid);
+  const columns = [];
+  const usedKeys = new Set();
+  grid[headerRowIndex].forEach((cell, index) => {
+    const label = formatPreviewValue(cell).replace(/\s+/g, ' ').trim();
+    if (!label) return;
+    let key = label;
+    for (let n = 1; usedKeys.has(key); n++) key = `${label}_${n}`;
+    usedKeys.add(key);
+    columns.push({ key, label, index });
+  });
+  if (columns.length === 0) throw new Error(`"${targetSheetName}" 시트에서 헤더(컬럼명) 행을 찾을 수 없습니다.`);
+
+  const rows = grid
+    .slice(headerRowIndex + 1)
+    .map((r) => {
+      const obj = {};
+      columns.forEach(({ key, index }) => {
+        obj[key] = r[index] === undefined ? '' : r[index];
+      });
+      return obj;
+    })
+    .filter((obj) => Object.values(obj).some((v) => v !== ''));
+
+  // 컬럼별 원본 숫자 표시 형식(%, 통화, 천 단위 등). 변환 결과 엑셀에서 0.15가 "15%"로 보이도록 넘겨준다.
+  const sheet = workbook.Sheets[targetSheetName];
+  const start = XLSX.utils.decode_range(sheet['!ref']).s;
+  const numberFormats = {};
+  columns.forEach(({ key, index }) => {
+    for (let r = headerRowIndex + 1; r < grid.length; r++) {
+      const cell = sheet[XLSX.utils.encode_cell({ r: start.r + r, c: start.c + index })];
+      if (cell && cell.t === 'n' && typeof cell.z === 'string' && cell.z !== 'General' && !XLSX.SSF.is_date(cell.z)) {
+        numberFormats[key] = cell.z;
+        break;
+      }
+    }
+  });
+
+  return { headers: columns.map((c) => c.key), labels: columns.map((c) => c.label), headerRowIndex, rows, numberFormats };
+}
+
+/** 헤더 정보만 필요할 때: { headers, labels, headerRowIndex } */
+function extractHeaders(filePath, sheetName) {
+  const { headers, labels, headerRowIndex } = readSheetTable(filePath, sheetName);
+  return { headers, labels, headerRowIndex };
 }
 
 /** 두 문자열 간 편집거리(Levenshtein distance)를 계산 */
@@ -870,6 +985,7 @@ module.exports = {
   bindDropzone,
   refreshSheetSelector,
   extractHeaders,
+  readSheetTable,
   normalizeFieldName,
   levenshteinDistance,
   decomposeHangulToJamo,

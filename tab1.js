@@ -4,7 +4,6 @@
 const { ipcRenderer } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const XLSX = require('xlsx');
 const ExcelJS = require('exceljs');
 const common = require('./common.js');
 
@@ -15,12 +14,12 @@ const {
   safeReadFileSync,
   safeWriteFileSync,
   confirmModal,
-  readWorkbookSmart,
   DATA_FILE_FILTERS,
   JSON_FILTERS,
   bindDropzone,
   refreshSheetSelector,
   extractHeaders,
+  readSheetTable,
   findAutoMatch,
   xmlEscape,
   formatPreviewValue,
@@ -32,10 +31,9 @@ let fileAPath = null;
 let fileBPath = null;
 let sheetAName = null;
 let sheetBName = null;
-let headerRowIndexA = 0; // 자동 감지된 헤더 행의 실제 시트 행 인덱스(0-based)
-let headerRowIndexB = 0;
 let headersA = [];
-let headersB = [];
+let headersB = []; // 컬럼키 (같은 이름이 둘이면 "비고_1"처럼 구분됨)
+let labelsB = []; // 결과 파일 헤더에 쓸 원래 컬럼 이름
 let mapping = {}; // { bColumn: aColumn|null }
 let requiredColumns = new Set(); // 저장 전 검증에서 "필수"로 체크된 B 컬럼
 let sampleRowsA = []; // 원본(A) 파일의 앞 2행 (매핑 테이블의 값 미리보기용)
@@ -61,8 +59,7 @@ const presetSelect = document.getElementById('presetSelect');
 function resetAnalysisState() {
   headersA = [];
   headersB = [];
-  headerRowIndexA = 0;
-  headerRowIndexB = 0;
+  labelsB = [];
   mapping = {};
   requiredColumns = new Set();
   sampleRowsA = [];
@@ -216,25 +213,27 @@ document.getElementById('btnAnalyze').addEventListener('click', () => {
       throw new Error('원본(A) 파일과 타겟 양식(B) 파일을 모두 선택하세요.');
     }
     log(`구조 분석을 시작합니다... (A 시트: ${sheetAName || '첫 번째 시트'}, B 시트: ${sheetBName || '첫 번째 시트'})`);
-    const resultA = extractHeaders(fileAPath, sheetAName);
+    const resultA = readSheetTable(fileAPath, sheetAName);
     const resultB = extractHeaders(fileBPath, sheetBName);
     headersA = resultA.headers;
     headersB = resultB.headers;
-    headerRowIndexA = resultA.headerRowIndex;
-    headerRowIndexB = resultB.headerRowIndex;
-    if (headerRowIndexA > 0) {
-      log(`원본(A) 파일: 제목/빈 행으로 보이는 ${headerRowIndexA}개 행을 건너뛰고 ${headerRowIndexA + 1}행을 헤더로 인식했습니다.`, 'warn');
-    }
-    if (headerRowIndexB > 0) {
-      log(`타겟(B) 파일: 제목/빈 행으로 보이는 ${headerRowIndexB}개 행을 건너뛰고 ${headerRowIndexB + 1}행을 헤더로 인식했습니다.`, 'warn');
-    }
+    labelsB = resultB.labels;
+    // 매핑 테이블의 값 미리보기용 원본(A) 앞 2행
+    sampleRowsA = resultA.rows.slice(0, 2);
+    [
+      ['원본(A)', resultA.headerRowIndex],
+      ['타겟(B)', resultB.headerRowIndex],
+    ].forEach(([label, idx]) => {
+      if (idx > 0) log(`${label} 파일: 제목/빈 행으로 보이는 ${idx}개 행을 건너뛰고 ${idx + 1}번째 행을 헤더로 인식했습니다.`, 'warn');
+    });
+    [
+      ['원본(A)', resultA],
+      ['타겟(B)', resultB],
+    ].forEach(([label, { headers, labels }]) => {
+      const renamed = headers.filter((k, i) => k !== labels[i]);
+      if (renamed.length > 0) log(`${label} 파일에 이름이 같은 컬럼이 있어 ${renamed.join(', ')}(으)로 구분했습니다.`, 'warn');
+    });
     log(`원본(A) 컬럼 ${headersA.length}개, 타겟(B) 컬럼 ${headersB.length}개 발견`, 'ok');
-
-    // 매핑 테이블에 값 미리보기를 보여주기 위해 원본(A)의 앞 2행을 함께 읽어둔다.
-    const workbookA = readWorkbookSmart(fileAPath);
-    const sheetA = workbookA.Sheets[sheetAName || workbookA.SheetNames[0]];
-    const previewRowsRaw = XLSX.utils.sheet_to_json(sheetA, { defval: '', range: headerRowIndexA });
-    sampleRowsA = previewRowsRaw.slice(0, 2);
 
     renderMappingTable();
     analyzeStatus.textContent = '분석 완료';
@@ -472,7 +471,8 @@ document.getElementById('btnSavePreset').addEventListener('click', async () => {
       if (!overwrite) return;
     }
 
-    const targetId = existing ? existing.id : currentPresetId || generatePresetId();
+    // 이름을 바꿔 저장하면 새 프리셋으로 만든다 — 선택돼 있던 프리셋을 새 이름으로 덮어쓰면 원래 프리셋이 사라진다
+    const targetId = existing ? existing.id : generatePresetId();
     const now = new Date().toISOString();
     const existingRecord = presets.find((p) => p.id === targetId);
 
@@ -607,7 +607,7 @@ const CONVERT_PREVIEW_ROW_LIMIT = 5;
  * 변환 결과 확인 모달을 띄운다. 검증 요약 + 앞부분 미리보기를 보여주고,
  * "그대로 저장"(true) / "취소하고 수정"(false)을 Promise로 반환한다.
  */
-function showConvertReviewModal(headersB, convertedRows, validation) {
+function showConvertReviewModal(headersB, labels, convertedRows, validation) {
   const lines = [];
   lines.push(`<div class="review-line ok">총 <b>${convertedRows.length}</b>행이 변환되었습니다.</div>`);
 
@@ -628,15 +628,10 @@ function showConvertReviewModal(headersB, convertedRows, validation) {
 
   convertReviewSummary.innerHTML = lines.join('');
 
-  convertReviewTableHead.innerHTML = headersB.map((h) => `<th>${xmlEscape(h)}</th>`).join('');
+  convertReviewTableHead.innerHTML = labels.map((h) => `<th>${xmlEscape(h)}</th>`).join('');
   const previewRows = convertedRows.slice(0, CONVERT_PREVIEW_ROW_LIMIT);
   convertReviewTableBody.innerHTML = previewRows
-    .map(
-      (row) =>
-        `<tr>${headersB
-          .map((h) => `<td>${row[h] === '' || row[h] === null || row[h] === undefined ? '' : xmlEscape(String(row[h]))}</td>`)
-          .join('')}</tr>`
-    )
+    .map((row) => `<tr>${headersB.map((h) => `<td>${xmlEscape(formatPreviewValue(row[h]))}</td>`).join('')}</tr>`)
     .join('');
   if (convertedRows.length > previewRows.length) {
     convertReviewTableBody.innerHTML += `<tr><td colspan="${headersB.length}" class="empty-hint">... 외 ${convertedRows.length - previewRows.length}행</td></tr>`;
@@ -645,18 +640,32 @@ function showConvertReviewModal(headersB, convertedRows, validation) {
   return confirmModal(convertReviewModal, convertReviewProceedBtn, convertReviewCancelBtn);
 }
 
+/** Date를 엑셀 날짜 일련번호로. 시간대 계산 없이 화면에 보이는 연/월/일/시/분/초 그대로 옮긴다 */
+function toExcelDateSerial(d) {
+  const utc = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds());
+  return (utc - Date.UTC(1899, 11, 30)) / 86400000;
+}
+
 /**
  * [Load] 변환된 데이터를 서식이 적용된 엑셀 파일로 내보낸다 (exceljs 사용).
  * - 헤더 행: 배경색 + 흰 글자 + 굵게 + 테두리, 첫 행 고정(스크롤해도 헤더 유지)
  * - 열 너비: 헤더/값의 실제 표시 폭에 맞춰 자동 조정 → "###" 잘림 방지
- * - 모든 값이 "안전한 숫자"인 열만 실제 숫자로 저장하고 천단위 구분(#,##0)
- *   서식과 우측 정렬을 적용. 그 외에는 원래 문자열 그대로 좌측 정렬 유지.
+ * - 숫자 열: 빈 값을 뺀 모든 값이 숫자인 열은 실제 숫자로 저장하고 천단위 구분(#,##0)
+ *   서식과 우측 정렬을 적용한다. 원본이 엑셀이면 원본에서 숫자였던 값만 숫자로 본다 —
+ *   원본 작성자가 일부러 "텍스트"로 넣은 사번·계좌번호 같은 숫자 글자를 바꾸지 않기
+ *   위함. 값의 종류 정보가 없는 원본(CSV, 한글 문서 표: numericText)은 "안전한 숫자
+ *   글자"(isSafeNumericString)도 숫자로 바꾼다.
+ * - 날짜: 엑셀 날짜 일련번호 + "yyyy-mm-dd"(시각이 있으면 "yyyy-mm-dd hh:mm:ss") 서식.
+ *   JS Date를 exceljs에 그대로 넘기면 UTC 기준으로 저장되어 한국 시간에서는 하루 전
+ *   날짜가 되고 표시 형식도 미국식(mm-dd-yy)이 되므로 직접 일련번호로 바꾼다.
+ * - numberFormats: 원본 컬럼의 숫자 표시 형식(%, 통화 등). 있으면 기본 천단위 서식 대신 쓴다.
+ * headers는 값을 찾을 컬럼키, labels는 헤더 행에 보일 이름이다.
  */
-async function buildStyledExcelBuffer(headers, rows, sheetName) {
+async function buildStyledExcelBuffer(headers, labels, rows, sheetName, { numericText = false, numberFormats = {} } = {}) {
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet(sheetName || 'Converted');
 
-  worksheet.addRow(headers);
+  worksheet.addRow(labels);
   worksheet.views = [{ state: 'frozen', ySplit: 1 }];
 
   const headerRow = worksheet.getRow(1);
@@ -672,32 +681,39 @@ async function buildStyledExcelBuffer(headers, rows, sheetName) {
     };
   });
 
-  // 열별로 "빈 값을 제외한 모든 값이 안전한 숫자인지" 판정
+  const isEmpty = (v) => v === '' || v === null || v === undefined;
+  const isNumericValue = (v) => (typeof v === 'number' ? Number.isFinite(v) : numericText && isSafeNumericString(v));
   const columnIsNumeric = headers.map((h) => {
     let sawAny = false;
     for (const row of rows) {
       const v = row[h];
-      if (v === '' || v === null || v === undefined) continue;
+      if (isEmpty(v)) continue;
       sawAny = true;
-      if (!isSafeNumericString(v)) return false;
+      if (!isNumericValue(v)) return false;
     }
     return sawAny;
   });
   const columnHasDecimal = headers.map(
-    (h, i) => columnIsNumeric[i] && rows.some((row) => String(row[h]).includes('.'))
+    (h, i) => columnIsNumeric[i] && rows.some((row) => !isEmpty(row[h]) && !Number.isInteger(Number(row[h])))
   );
 
   rows.forEach((row) => {
     const values = headers.map((h, i) => {
       const raw = row[h];
-      if (raw === '' || raw === null || raw === undefined) return '';
+      if (isEmpty(raw)) return '';
+      if (raw instanceof Date) return toExcelDateSerial(raw);
       return columnIsNumeric[i] ? Number(raw) : raw;
     });
     const excelRow = worksheet.addRow(values);
     excelRow.eachCell((cell, colNumber) => {
       const i = colNumber - 1;
-      if (columnIsNumeric[i]) {
-        cell.numFmt = columnHasDecimal[i] ? '#,##0.######' : '#,##0';
+      const raw = row[headers[i]];
+      if (raw instanceof Date) {
+        const hasTime = raw.getHours() !== 0 || raw.getMinutes() !== 0 || raw.getSeconds() !== 0;
+        cell.numFmt = hasTime ? 'yyyy-mm-dd hh:mm:ss' : 'yyyy-mm-dd';
+        cell.alignment = { horizontal: 'center' };
+      } else if (columnIsNumeric[i]) {
+        cell.numFmt = numberFormats[headers[i]] || (columnHasDecimal[i] ? '#,##0.######' : '#,##0');
         cell.alignment = { horizontal: 'right' };
       } else {
         cell.alignment = { horizontal: 'left' };
@@ -706,11 +722,11 @@ async function buildStyledExcelBuffer(headers, rows, sheetName) {
   });
 
   headers.forEach((h, i) => {
-    let maxWidth = visualWidth(h);
+    let maxWidth = visualWidth(labels[i]);
     rows.forEach((row) => {
       const v = row[h];
-      if (v === '' || v === null || v === undefined) return;
-      maxWidth = Math.max(maxWidth, visualWidth(String(v)));
+      if (isEmpty(v)) return;
+      maxWidth = Math.max(maxWidth, visualWidth(formatPreviewValue(v)));
     });
     worksheet.getColumn(i + 1).width = Math.min(40, Math.max(8, Math.ceil(maxWidth) + 2));
   });
@@ -739,11 +755,13 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
     // [Extract] 원본(A) 파일에서 원시 데이터를 읽어온다 (자동 감지된 헤더 행 다음부터)
     log(`데이터 변환을 시작합니다... (A 시트: ${sheetAName || '첫 번째 시트'})`);
 
-    const workbook = readWorkbookSmart(fileAPath);
-    const targetSheetName = sheetAName || workbook.SheetNames[0];
-    const sheet = workbook.Sheets[targetSheetName];
-    if (!sheet) throw new Error(`원본(A) 파일에서 "${targetSheetName}" 시트를 찾을 수 없습니다.`);
-    const sourceRows = XLSX.utils.sheet_to_json(sheet, { defval: '', range: headerRowIndexA });
+    const sourceTable = readSheetTable(fileAPath, sheetAName);
+    const sourceRows = sourceTable.rows;
+    const numberFormats = {};
+    headersB.forEach((bCol) => {
+      const aCol = mapping[bCol];
+      if (aCol && sourceTable.numberFormats[aCol]) numberFormats[bCol] = sourceTable.numberFormats[aCol];
+    });
 
     if (sourceRows.length === 0) {
       throw new Error('원본(A) 파일에 변환할 데이터 행이 없습니다.');
@@ -772,7 +790,7 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
       log(`모든 컬럼 값이 동일한 중복 행이 ${validation.duplicateCount}건 있습니다.`, 'warn');
     }
 
-    const proceed = await showConvertReviewModal(headersB, convertedRows, validation);
+    const proceed = await showConvertReviewModal(headersB, labelsB, convertedRows, validation);
     if (!proceed) {
       log('사용자가 확인 단계에서 취소했습니다. 매핑을 수정한 뒤 다시 시도하세요.', 'warn');
       return;
@@ -789,7 +807,9 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
     }
 
     // [Load] 헤더 서식·열 너비·숫자 서식을 적용하여 완성된 엑셀 파일로 저장한다
-    const outputBuffer = await buildStyledExcelBuffer(headersB, convertedRows, sheetBName);
+    // CSV·한글 문서 표는 모든 값이 글자로 들어오므로 숫자 글자도 숫자로 바꿔 저장한다
+    const numericText = ['.csv', '.hwp', '.hwpx', '.hwpt'].includes(path.extname(fileAPath).toLowerCase());
+    const outputBuffer = await buildStyledExcelBuffer(headersB, labelsB, convertedRows, sheetBName, { numericText, numberFormats });
     safeWriteFileSync(savePath, outputBuffer);
 
     log(`변환된 파일이 저장되었습니다: ${savePath}`, 'ok');
