@@ -53,8 +53,18 @@
       </div>
 
       <div class="card" id="workbenchCard">
-        <h2><span class="step-badge">2</span>매핑 작업대</h2>
-        <p class="desc">원본(A) 컬럼과 타겟(B) 컬럼의 연결을 확인하고, 저장될 결과를 미리 보며 값을 직접 고칠 수 있습니다. 모든 조작은 실행 취소(Ctrl+Z)로 되돌릴 수 있고, 원본 파일은 바뀌지 않습니다.</p>
+        <h2><span class="step-badge">2</span>컬럼 매핑</h2>
+        <p class="desc">타겟(B) 파일의 각 컬럼에 대응할 원본(A) 파일의 컬럼을 선택하세요. 모든 조작은 실행 취소(Ctrl+Z)로 되돌릴 수 있고, 원본 파일은 바뀌지 않습니다.</p>
+
+        <div class="wb-visual-row">
+          <label class="wb-switch" for="wbVisualToggle">
+            <input type="checkbox" id="wbVisualToggle" role="switch" aria-describedby="wbVisualHint" />
+            <span class="wb-switch-track" aria-hidden="true"><span class="wb-switch-thumb"></span></span>
+            <span class="wb-switch-label">시각화</span>
+            <span class="wb-switch-state" id="wbVisualState" aria-hidden="true">OFF</span>
+          </label>
+          <span class="wb-muted" id="wbVisualHint">켜면 연결 보기 · 결과 미리보기 · 값 직접 고치기를 쓸 수 있습니다. 끄면 매핑 표만 보입니다.</span>
+        </div>
 
         <div class="preset-row">
           <label for="presetSelect">저장된 프리셋</label>
@@ -69,6 +79,7 @@
         <div id="wbEmpty" class="empty-hint wb-empty">먼저 [구조 분석]을 실행하세요.</div>
         <div id="wbMain" class="wb" hidden>
           <div id="wbBanner" class="wb-banner" hidden></div>
+          <div id="wbOffNote" class="wb-off-note" role="status" hidden></div>
           <div id="wbSummary" class="wb-summary" role="toolbar" aria-label="매핑 요약"></div>
           <div id="wbConnect" class="wb-connect"></div>
           <div id="wbListView" class="wb-listview" hidden>
@@ -234,6 +245,12 @@
     <div class="modal-card modal-card-wide" role="dialog" aria-labelledby="convertReviewTitle">
       <h3 id="convertReviewTitle">이대로 변환할까요?</h3>
       <div id="convertReviewSummary" class="review-summary"></div>
+      <div id="convertReviewPreview" class="table-wrap review-preview-wrap" hidden>
+        <table class="mapping-table">
+          <thead><tr id="convertReviewTableHead"></tr></thead>
+          <tbody id="convertReviewTableBody"></tbody>
+        </table>
+      </div>
       <div class="btn-row modal-btn-row">
         <button id="convertReviewCancel" class="btn ghost">취소하고 수정</button>
         <button id="convertReviewProceed" class="btn primary">그대로 저장</button>

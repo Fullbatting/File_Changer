@@ -3,10 +3,24 @@
 // 상태는 갖지 않는다 — tab1.js가 넘겨준 api로 상태를 읽고, 바꿀 때는 api의 조작 함수
 // (내부적으로 commit 하나를 거침)를 부른다. 데이터 값은 항상 textContent로 넣는다.
 
+const fs = require('fs');
+const path = require('path');
 const XLSX = require('xlsx');
 const common = require('./common.js');
 
-const { formatPreviewValue, matchesColumnSearch, rankSourceCandidates, showConfirmDialog } = common;
+const {
+  formatPreviewValue,
+  matchesColumnSearch,
+  rankSourceCandidates,
+  showConfirmDialog,
+  getUserDataPath,
+  onUserDataPathReady,
+  safeReadFileSync,
+  safeWriteFileSync,
+  log,
+} = common;
+
+const UI_SETTINGS_FILE_NAME = 'ui-settings.json';
 
 const REASON_LABELS = {
   exact: '같은 이름',
@@ -81,10 +95,14 @@ function createWorkbench(api) {
     listView: $('wbListView'),
     listBody: $('mappingTableBody'),
     preview: $('wbPreview'),
+    offNote: $('wbOffNote'),
+    visualToggle: $('wbVisualToggle'),
+    visualState: $('wbVisualState'),
   };
 
   const ui = {
-    view: 'connect',
+    visual: false, // 시각화(연결 보기·결과 미리보기·값 고치기). 기본은 꺼짐 — 끄면 매핑 표(목록 보기)만
+    view: 'list',
     groupMode: 'order',
     collapsed: { auto: true },
     search: '',
@@ -358,6 +376,19 @@ function createWorkbench(api) {
     root.empty.hidden = true;
     root.main.hidden = false;
     renderBanner();
+    renderOffNote();
+    if (!ui.visual) {
+      // 시각화 꺼짐: 매핑 표만
+      root.summary.hidden = true;
+      root.connect.hidden = true;
+      root.preview.hidden = true;
+      root.listView.hidden = false;
+      renderList();
+      ui.renderCallbacks.forEach((cb) => cb());
+      return;
+    }
+    root.summary.hidden = false;
+    root.preview.hidden = false;
     renderSummary();
     root.connect.hidden = ui.view !== 'connect';
     root.listView.hidden = ui.view !== 'list';
@@ -367,6 +398,56 @@ function createWorkbench(api) {
     renderPreview();
     if (ui.picker) renderPickerList();
     ui.renderCallbacks.forEach((cb) => cb());
+  }
+
+  /* ---------- 시각화 켜기/끄기 ---------- */
+
+  function settingsPath() {
+    return path.join(getUserDataPath(), UI_SETTINGS_FILE_NAME);
+  }
+
+  function syncVisualToggle() {
+    root.visualToggle.checked = ui.visual;
+    root.visualState.textContent = ui.visual ? 'ON' : 'OFF';
+  }
+
+  function setVisual(on, { save = true } = {}) {
+    ui.visual = !!on;
+    ui.view = ui.visual ? 'connect' : 'list';
+    closePicker();
+    hideBubble();
+    toast.hidden = true;
+    syncVisualToggle();
+    if (save) {
+      try {
+        safeWriteFileSync(settingsPath(), JSON.stringify({ visual: ui.visual }, null, 2));
+      } catch (err) {
+        log(`화면 설정을 저장하지 못했습니다: ${err.message}`, 'warn');
+      }
+    }
+    render();
+  }
+
+  root.visualToggle.addEventListener('change', () => setVisual(root.visualToggle.checked));
+
+  // 사용자 데이터 폴더가 준비되면 지난번 켜기/끄기 상태를 불러온다(파일이 없으면 기본값 꺼짐)
+  onUserDataPathReady(() => {
+    let visual = false;
+    try {
+      if (fs.existsSync(settingsPath())) visual = JSON.parse(safeReadFileSync(settingsPath(), 'utf-8')).visual === true;
+    } catch (err) {
+      log(`화면 설정을 불러오지 못해 기본값(시각화 꺼짐)으로 시작합니다: ${err.message}`, 'warn');
+    }
+    setVisual(visual, { save: false });
+  });
+  syncVisualToggle();
+
+  /** 시각화를 끈 상태에서도 직접 고친 값이 저장에 들어간다는 것을 알린다 */
+  function renderOffNote() {
+    const edited = st.overrides.size;
+    root.offNote.hidden = ui.visual || edited === 0;
+    if (root.offNote.hidden) return;
+    root.offNote.textContent = `직접 고친 값 ${edited}개가 저장에 포함됩니다. 확인하거나 되돌리려면 시각화를 켜세요.`;
   }
 
   /* ---------- 프리셋 제안 띠 ---------- */
@@ -483,7 +564,7 @@ function createWorkbench(api) {
   }
 
   function setView(view) {
-    if (ui.view === view) return;
+    if (!ui.visual || ui.view === view) return;
     ui.view = view;
     closePicker();
     render();
@@ -554,7 +635,7 @@ function createWorkbench(api) {
   }
 
   function renderConnect() {
-    if (!st || !st.source) return;
+    if (!st || !st.source || !ui.visual) return;
     groupStatusBtn.setAttribute('aria-pressed', String(ui.groupMode === 'status'));
     groupOrderBtn.setAttribute('aria-pressed', String(ui.groupMode === 'order'));
     connHeadA.textContent = '';
@@ -579,7 +660,7 @@ function createWorkbench(api) {
 
   /** 보이는 범위(+여유)의 항목만 DOM으로 만든다 */
   function renderConnectWindow() {
-    if (!st || !st.source) return;
+    if (!st || !st.source || !ui.visual) return;
     const hadFocus = rowsScroller.contains(document.activeElement) && document.activeElement !== rowsScroller;
     const focusedKey = hadFocus ? document.activeElement.closest('[data-item-key]') : null;
     const restoreKey = focusedKey ? focusedKey.dataset.itemKey : null;
@@ -938,7 +1019,7 @@ function createWorkbench(api) {
 
   /** b 줄로 스크롤하고 초점을 준다(접힌 묶음이면 펼친다) */
   function focusRow(b) {
-    if (!b || !st || !st.source) return;
+    if (!b || !st || !st.source || !ui.visual) return;
     if (ui.view !== 'connect') {
       ui.view = 'connect';
       render();
@@ -1396,7 +1477,7 @@ function createWorkbench(api) {
   }
 
   function renderPreview() {
-    if (!st || !st.source) return;
+    if (!st || !st.source || !ui.visual) return;
     if (ui.preview.editing) return; // 입력 중에는 다시 그리지 않는다(입력 내용 보존)
     const derived = api.getDerived();
     const n = derived.rowCount;
@@ -1858,7 +1939,7 @@ function createWorkbench(api) {
     closePicker();
     hideBubble();
     toast.hidden = true;
-    ui.view = 'connect';
+    ui.view = ui.visual ? 'connect' : 'list';
     ui.groupMode = 'order';
     ui.collapsed = { auto: true };
     ui.search = '';
@@ -1894,6 +1975,9 @@ function createWorkbench(api) {
     },
     onRender(cb) {
       ui.renderCallbacks.push(cb);
+    },
+    isVisual() {
+      return ui.visual;
     },
   };
 }

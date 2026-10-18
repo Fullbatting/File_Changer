@@ -1,0 +1,71 @@
+// tests/e2e/make-samples.js
+// samples/ 폴더의 예제 파일을 다시 만든다: node tests/e2e/make-samples.js
+// (직접 고쳐 쓰다가 원래대로 돌리고 싶을 때 실행)
+
+const fs = require('fs');
+const path = require('path');
+const XLSX = require('xlsx');
+const { makeSmall, makeMany, sheetFromRows, writeBook, serial } = require('./fixtures.js');
+
+const OUT = path.join(__dirname, '..', '..', 'samples');
+fs.mkdirSync(OUT, { recursive: true });
+
+const rename = (from, to) => fs.renameSync(from, path.join(OUT, to));
+
+// 1) 기본: 동의어·비슷한 이름·연결 없음·중복 행·제목 행·B2에서 시작하는 표·값이 빈 컬럼
+const small = makeSmall(OUT);
+rename(small.source, '01_기본_직원명부(원본).xlsx');
+rename(small.target, '01_기본_회사양식(타겟).xlsx');
+
+// 2) 컬럼이 많을 때: 원본 52열 × 120행, 타겟 41열
+const many = makeMany(OUT, 120);
+rename(many.source, '02_컬럼많음_인사기록_전체(원본).xlsx');
+rename(many.target, '02_컬럼많음_급여대장_양식(타겟).xlsx');
+
+// 3) CSV: 앞자리 0(거래처코드·우편번호), 글자로 된 숫자·날짜, 한글(UTF-8 BOM)
+const csvRows = [
+  ['거래처코드', '상호', '대표', '전화', '우편번호', '거래액', '등록일', '메모'],
+  ['00123', '(주)한빛상사', '김민준', '02-555-0101', '03187', '1500000', '2026-01-05', '우수 거래처'],
+  ['00456', '푸른식품', '이서연', '031-777-1234', '13487', '820000', '2026-02-11', ''],
+  ['01020', '대한기계', '박지호', '051-222-9876', '48058', '12500000', '2026-03-20', '분기 결제'],
+  ['00789', '새봄문구', '최하은', '010-3456-7890', '06236', '95000', '2026-04-02', ''],
+];
+const csv = '﻿' + csvRows.map((r) => r.map((v) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)).join(',')).join('\r\n') + '\r\n';
+fs.writeFileSync(path.join(OUT, '03_CSV_거래처목록(원본).csv'), csv);
+writeBook(path.join(OUT, '03_CSV_거래처_양식(타겟).xlsx'), {
+  거래처: sheetFromRows([['거래처코드', '상호', '대표자', '전화번호', '우편번호', '거래금액', '등록일자', '비고']]),
+});
+
+// 4) 표시 형식·여러 시트·세로 병합·같은 이름 컬럼: %·통화·날짜+시각·병합된 지점 칸·"비고"가 두 개
+const pct = (v) => ({ t: 'n', v, z: '0.0%' });
+const won = (v) => ({ t: 'n', v, z: '"₩"#,##0' });
+const dt = (y, m, d, h, mi) => ({ t: 'n', v: serial(y, m, d) + (h * 60 + mi) / 1440, z: 'yyyy-mm-dd hh:mm' });
+function salesSheet(month, rows) {
+  const ws = sheetFromRows([
+    [`2026년 ${month}월 지점별 매출`],
+    ['지점', '담당자', '매출액', '달성률', '집계시각', '비고', '비고'],
+    ...rows,
+  ]);
+  ws['!merges'] = [XLSX.utils.decode_range('A3:A4'), XLSX.utils.decode_range('A5:A6')]; // 지점 칸 세로 병합
+  return ws;
+}
+writeBook(path.join(OUT, '04_형식_매출현황(원본).xlsx'), {
+  '2026-09': salesSheet(9, [
+    ['서울', '홍길동', won(52300000), pct(1.046), dt(2026, 9, 30, 18, 0), '목표 초과', ''],
+    ['', '김영희', won(41800000), pct(0.836), dt(2026, 9, 30, 18, 0), '', '재고 부족'],
+    ['부산', '이철수', won(38900000), pct(0.973), dt(2026, 9, 30, 18, 5), '', ''],
+    ['', '박민수', won(29100000), pct(0.728), dt(2026, 9, 30, 18, 5), '신규 담당', ''],
+  ]),
+  '2026-10': salesSheet(10, [
+    ['서울', '홍길동', won(55100000), pct(1.102), dt(2026, 10, 31, 17, 30), '', ''],
+    ['', '김영희', won(47250000), pct(0.945), dt(2026, 10, 31, 17, 30), '', ''],
+    ['부산', '이철수', won(40020000), pct(1.0005), dt(2026, 10, 31, 17, 45), '목표 달성', ''],
+    ['', '박민수', won(33600000), pct(0.84), dt(2026, 10, 31, 17, 45), '', '휴가 1주'],
+  ]),
+});
+writeBook(path.join(OUT, '04_형식_매출보고_양식(타겟).xlsx'), {
+  보고서: sheetFromRows([['지점명', '담당', '매출', '달성률', '집계 시각', '비고', '특이사항']]),
+});
+
+console.log(`예제 파일을 만들었습니다: ${OUT}`);
+fs.readdirSync(OUT).forEach((f) => console.log(`  ${f}`));

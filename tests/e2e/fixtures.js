@@ -129,4 +129,4 @@ function makeWide(dir, { rowCount, sourceCols, targetCols, name }) {
   };
 }
 
-module.exports = { makeSmall, makeMany, makeWide, MANY_TARGET, MANY_SOURCE, serial };
+module.exports = { makeSmall, makeMany, makeWide, MANY_TARGET, MANY_SOURCE, serial, sheetFromRows, writeBook, dateCell, moneyCell };

@@ -161,8 +161,8 @@ function undo() {
   if (!entry) return false;
   history.redo.push({ label: entry.label, state: snapshot() });
   restore(entry.state);
+  // 실행 취소·다시 실행은 로그에 남기지 않는다(로그창 갱신이 조작마다 화면을 무겁게 하고, 화면에 바로 보이므로)
   workbench.render();
-  log(`실행 취소: ${entry.label}`);
   return true;
 }
 
@@ -172,7 +172,6 @@ function redo() {
   history.undo.push({ label: entry.label, state: snapshot() });
   restore(entry.state);
   workbench.render();
-  log(`다시 실행: ${entry.label}`);
   return true;
 }
 
@@ -1127,11 +1126,16 @@ function visualWidth(str) {
 // 변환 결과 확인(요약) 모달
 const convertReviewModal = document.getElementById('convertReviewModal');
 const convertReviewSummary = document.getElementById('convertReviewSummary');
+const convertReviewPreview = document.getElementById('convertReviewPreview');
+const convertReviewTableHead = document.getElementById('convertReviewTableHead');
+const convertReviewTableBody = document.getElementById('convertReviewTableBody');
+const CONVERT_PREVIEW_ROW_LIMIT = 5;
 const convertReviewProceedBtn = document.getElementById('convertReviewProceed');
 const convertReviewCancelBtn = document.getElementById('convertReviewCancel');
 
 /**
- * 변환 확인 모달: 미리보기는 이미 화면에 있으므로 요약만 보여준다.
+ * 변환 확인 모달: 요약을 보여준다. 시각화가 켜져 있으면 미리보기는 이미 화면에 있으므로 요약만,
+ * 꺼져 있으면 저장될 표의 앞 5행도 함께 보여준다.
  * 문제가 있어도 저장을 막지는 않고 사용자가 확인 후 진행/취소를 선택한다
  * (CSV 임포트 도구들의 allowInvalidSubmit 기본 동작과 같은 취지).
  */
@@ -1167,6 +1171,37 @@ function showConvertReviewModal(derived) {
   }
 
   convertReviewSummary.innerHTML = lines.join('');
+
+  const showPreview = !workbench.isVisual();
+  convertReviewPreview.hidden = !showPreview;
+  convertReviewTableHead.innerHTML = '';
+  convertReviewTableBody.innerHTML = '';
+  if (showPreview) {
+    labelsB.forEach((label) => {
+      const th = document.createElement('th');
+      th.textContent = label;
+      convertReviewTableHead.appendChild(th);
+    });
+    const shown = Math.min(derived.rowCount, CONVERT_PREVIEW_ROW_LIMIT);
+    for (let i = 0; i < shown; i++) {
+      const tr = document.createElement('tr');
+      headersB.forEach((b) => {
+        const td = document.createElement('td');
+        td.textContent = displayValue(derived.value(i, b), b);
+        tr.appendChild(td);
+      });
+      convertReviewTableBody.appendChild(tr);
+    }
+    if (derived.rowCount > shown) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = headersB.length;
+      td.className = 'empty-hint';
+      td.textContent = `... 외 ${derived.rowCount - shown}행`;
+      tr.appendChild(td);
+      convertReviewTableBody.appendChild(tr);
+    }
+  }
   return confirmModal(convertReviewModal, convertReviewProceedBtn, convertReviewCancelBtn);
 }
 
@@ -1274,7 +1309,9 @@ function updateConvertDesc() {
     return;
   }
   const edited = overrides.size > 0 ? ` 직접 고친 값 ${overrides.size}개가 들어갑니다.` : '';
-  convertDesc.textContent = `미리보기 그대로 ${source.rows.length}행을 저장합니다.${edited}`;
+  convertDesc.textContent = workbench.isVisual()
+    ? `미리보기 그대로 ${source.rows.length}행을 저장합니다.${edited}`
+    : `매핑에 따라 ${source.rows.length}행을 저장합니다. 저장 전에 검증 결과와 앞부분 미리보기를 확인할 수 있습니다.${edited}`;
 }
 workbench.onRender(updateConvertDesc);
 workbench.render();

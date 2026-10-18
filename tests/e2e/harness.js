@@ -35,7 +35,17 @@ function createHarness(name) {
     console.log(line);
   }
 
-  async function start({ width = 1360, height = 1000 } = {}) {
+  /**
+   * visual: 매핑 작업대 시각화 켜기/끄기 저장값을 미리 써 둔다(true/false). null이면 설정 파일 없이
+   * 시작해 기본값(꺼짐)을 확인할 수 있다. 기존 시나리오 테스트는 시각화를 켠 상태를 기준으로 한다.
+   */
+  async function start({ width = 1360, height = 1000, visual = true } = {}) {
+    const settingsFile = path.join(userDataDir, 'ui-settings.json');
+    if (visual === null) {
+      if (fs.existsSync(settingsFile)) fs.unlinkSync(settingsFile);
+    } else {
+      fs.writeFileSync(settingsFile, JSON.stringify({ visual }));
+    }
     await app.whenReady();
     // 초점·requestAnimationFrame이 실제 앱처럼 동작하도록 창을 띄우고(xvfb 안) 백그라운드 절전을 끈다
     win = new BrowserWindow({ width, height, show: true, webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false } });
