@@ -10,6 +10,7 @@ const ExcelJS = require('exceljs');
 const XLSX = require('xlsx');
 const common = require('./common.js');
 const { createWorkbench } = require('./mapping-workbench.js');
+const mergeSources = require('./merge-sources.js');
 
 const {
   log,
@@ -25,6 +26,8 @@ const {
   refreshSheetSelector,
   extractHeaders,
   readSheetTable,
+  readWorkbookSmart,
+  getSynonymGroups,
   findAutoMatch,
   detectValueKind,
   xmlEscape,
@@ -45,7 +48,7 @@ let sheetBName = null;
  * 모든 변경은 commit()을 거친다.
  * ------------------------------------------------------------------------- */
 
-let source = null; // readSheetTable 결과 + { samples, valueKinds, emptyColumns, fileName, numericText }
+let source = null; // readSheetTable(+합치기) 결과 + { samples, valueKinds, emptyColumns, columnOrigin, joinReports }
 let headersA = [];
 let headersB = []; // 컬럼키 (같은 이름이 둘이면 "비고_1"처럼 구분됨)
 let labelsB = []; // 결과 파일 헤더에 쓸 원래 컬럼 이름
@@ -245,6 +248,42 @@ function convertTextDateColumns(table) {
   return converted;
 }
 
+/**
+ * 값이 모두 글자로 들어오는 원본에서, 빈 값을 뺀 모든 값이 "안전한 숫자 글자"(isSafeNumericString)인
+ * 열을 숫자로 바꾼다. 앞자리 0이 있는 코드("00123")나 다른 글자가 섞인 열은 글자 그대로 둔다 —
+ * 엑셀 원본이 숫자였던 칸만 숫자로 저장하는 것과 같은 결과가 되도록 읽을 때 맞춰 둔다.
+ */
+function convertTextNumberColumns(table) {
+  const converted = [];
+  table.headers.forEach((a) => {
+    let sawAny = false;
+    for (let i = 0; i < table.rows.length; i++) {
+      const v = table.rows[i][a];
+      if (isEmptyValue(v)) continue;
+      if (typeof v !== 'string' || !isSafeNumericString(v)) return;
+      sawAny = true;
+    }
+    if (!sawAny) return;
+    table.rows.forEach((row) => {
+      if (!isEmptyValue(row[a])) row[a] = Number(String(row[a]).trim());
+    });
+    converted.push(a);
+  });
+  return converted;
+}
+
+/** CSV·한글 문서 표(값이 모두 글자인 원본)이면 숫자·날짜 열을 실제 숫자·날짜로 바꾼다 */
+function isTextSource(filePath) {
+  return ['.csv', '.hwp', '.hwpx', '.hwpt'].includes(path.extname(filePath).toLowerCase());
+}
+
+function normalizeTextSource(table, filePath, label) {
+  if (!isTextSource(filePath)) return;
+  const dateColumns = convertTextDateColumns(table);
+  convertTextNumberColumns(table);
+  if (dateColumns.length > 0 && label) log(`${label}의 날짜 글자 컬럼을 날짜로 읽었습니다: ${dateColumns.join(', ')}`);
+}
+
 /** 고친 값(글자)을 열 종류에 맞춰 저장할 값으로. 숫자·날짜로 볼 수 없으면 그 칸만 글자로 둔다 */
 function coerceOverride(str, kind) {
   if (str === '') return '';
@@ -260,8 +299,8 @@ function coerceOverride(str, kind) {
 }
 
 /** 저장할 때 이 칸을 숫자로 쓸지 (숫자 열 안에서도 글자로 고친 칸은 글자로 둔다) */
-function isNumericCell(v, numericText) {
-  return typeof v === 'number' ? Number.isFinite(v) : numericText && isSafeNumericString(v);
+function isNumericCell(v) {
+  return typeof v === 'number' && Number.isFinite(v);
 }
 
 /** 중복 행 비교용 값 표시(이전 검증 규칙과 같이 화면 글자 기준으로 비교한다) */
@@ -308,7 +347,7 @@ function columnStats(a) {
       idMap.set(token, id);
     }
     ids[i] = id;
-    if (isNumericCell(v, source.numericText)) {
+    if (isNumericCell(v)) {
       const decimal = !Number.isInteger(Number(v));
       numeric[i] = decimal ? 2 : 1;
       numericCount += 1;
@@ -327,8 +366,8 @@ function columnStats(a) {
 /**
  * 열 종류 판정(저장과 미리보기가 같이 쓴다). 고친 칸은 빼고 원본에서 온 값만으로 판정하므로
  * 고친 값 하나 때문에 열 전체의 숫자·날짜 판정이 바뀌지 않는다.
- * - number: 빈 값을 뺀 모든 값이 숫자(엑셀 원본은 원본에서 숫자였던 값만, numericText 원본은
- *   "안전한 숫자 글자"도) — buildStyledExcelBuffer의 숫자 열 규칙과 같다.
+ * - number: 빈 값을 뺀 모든 값이 숫자(엑셀 원본은 원본에서 숫자였던 값만, CSV·한글 문서 표는
+ *   읽을 때 숫자로 바꾼 값) — buildStyledExcelBuffer의 숫자 열 규칙과 같다.
  * - date: 빈 값을 뺀 모든 값이 날짜.
  * 원본에서 온 값이 하나도 없는 열(연결 없음 등)은 고친 값만으로 판정한다.
  */
@@ -383,7 +422,7 @@ function getDerived() {
         const v = coerceOverride(text, kind);
         typed.set(i, v);
         if (stats.numeric[i] === 2) decimal -= 1;
-        if (isNumericCell(v, source.numericText) && !Number.isInteger(Number(v))) decimal += 1;
+        if (isNumericCell(v) && !Number.isInteger(Number(v))) decimal += 1;
       });
       typedOverrides[ci] = typed;
     }
@@ -522,7 +561,7 @@ function displayValue(v, b) {
   const derived = getDerived();
   const ci = headersB.indexOf(b);
   const kind = derived && ci >= 0 ? derived.kinds[ci] : null;
-  if (kind && kind.kind === 'number' && isNumericCell(v, source.numericText)) {
+  if (kind && kind.kind === 'number' && isNumericCell(v)) {
     const a = mapping[b];
     const format = (a && source.numberFormats[a]) || (kind.hasDecimal ? '#,##0.######' : '#,##0');
     try {
@@ -540,7 +579,7 @@ function cellAlign(v, b) {
   if (isEmptyValue(v)) return '';
   const derived = getDerived();
   const ci = headersB.indexOf(b);
-  return derived && ci >= 0 && derived.kinds[ci].kind === 'number' && isNumericCell(v, source.numericText) ? 'num' : '';
+  return derived && ci >= 0 && derived.kinds[ci].kind === 'number' && isNumericCell(v) ? 'num' : '';
 }
 
 /** 고치기 전 원래 값(원본에서 온 값) */
@@ -567,7 +606,7 @@ const api = {
       overrides,
       canUndo: history.undo.length > 0,
       canRedo: history.redo.length > 0,
-      sourceName: fileAPath ? path.basename(fileAPath) : '',
+      sourceName: fileAPath ? [fileAPath, ...((source && source.joinReports) || []).map((r) => r.label)].map((p, i) => (i === 0 ? path.basename(p) : p)).join(' + ') : '',
       targetName: fileBPath ? path.basename(fileBPath) : '',
     };
   },
@@ -693,6 +732,12 @@ function resetAnalysisState() {
   workbench.reset();
   workbench.render();
   if (presetSelect) presetSelect.value = '';
+  if (mergeReportEl) {
+    mergeReportEl.hidden = true;
+    mergeReportEl.innerHTML = '';
+  }
+  splitBy = '';
+  renderSplitOptions();
   analyzeStatus.textContent = '대기 중';
   analyzeStatus.className = 'pill warn';
 }
@@ -709,6 +754,7 @@ async function onTab1SheetChanged(which, name) {
   }
   select.dataset.committed = name;
   resetAnalysisState();
+  if (which === 'A') refreshExtraSources({ resetKeys: true });
   log(`시트가 "${name}"(으)로 변경되었습니다. [구조 분석]을 다시 실행하세요.`, 'warn');
 }
 
@@ -735,20 +781,256 @@ function bindTab1File(which, dropEl, fileNameEl, sheetRowEl, sheetSelectEl) {
       (name) => onTab1SheetChanged(which, name)
     );
     sheetSelectEl.dataset.committed = sheetSelectEl.value;
+    if (which === 'A') refreshExtraSources({ resetKeys: true });
   });
 }
 
 bindTab1File('A', dropA, fileNameA, sheetRowA, sheetSelectA);
 bindTab1File('B', dropB, fileNameB, sheetRowB, sheetSelectB);
 
-/** 원본 표에 화면용 정보(컬럼별 앞쪽 값, 값 모양, 값이 모두 빈 컬럼)를 붙인다 */
-function prepareSource(table, filePath) {
-  // CSV·한글 문서 표는 모든 값이 글자로 들어오므로 숫자 글자도 숫자로, 날짜 글자는 날짜로 본다
-  const numericText = ['.csv', '.hwp', '.hwpx', '.hwpt'].includes(path.extname(filePath).toLowerCase());
-  if (numericText) {
-    const dateColumns = convertTextDateColumns(table);
-    if (dateColumns.length > 0) log(`원본(A)의 날짜 글자 컬럼을 날짜로 읽었습니다: ${dateColumns.join(', ')}`);
+/* -------------------------------------------------------------------------
+ * 원본 합치기: 첫 원본(A)에 다른 파일의 컬럼을 기준 컬럼(예: 사번)으로 이어 붙인다.
+ * 기준 컬럼은 값이 겹치는 정도·고유도·이름·코드 모양으로 자동 추천하고(merge-sources.js),
+ * 사용자가 바꿀 수 있다. 실제로 합치는 것은 [구조 분석] 때다.
+ * ------------------------------------------------------------------------- */
+
+const extraSourceList = document.getElementById('extraSourceList');
+const mergeReportEl = document.getElementById('mergeReport');
+let extraSources = []; // [{ id, path, label, sheetName, sheetNames, sheetUnit, headers, keyMain, keyOther, mode, suggestions, error }]
+let extraSourceSeq = 0;
+
+/** 파일 이름(확장자 제외)으로 짧은 라벨. 겹치면 뒤에 번호 */
+function makeSourceLabel(filePath) {
+  const base = path.basename(filePath, path.extname(filePath)) || '추가 원본';
+  let label = base;
+  for (let n = 2; extraSources.some((s) => s.label === label); n++) label = `${base}${n}`;
+  return label;
+}
+
+/** 첫 원본(A)의 표(글자 숫자·날짜 정리 후). 아직 고르지 않았으면 null */
+function readMainTableForMerge() {
+  if (!fileAPath) return null;
+  try {
+    const table = readSheetTable(fileAPath, sheetAName);
+    normalizeTextSource(table, fileAPath);
+    return table;
+  } catch (err) {
+    return null;
   }
+}
+
+/** 추가 원본 하나를 (다시) 읽고, 첫 원본과 이을 기준 컬럼을 추천해 비어 있으면 채운다 */
+function loadExtraSource(es, mainTable, { resetKeys = false } = {}) {
+  es.error = '';
+  try {
+    const table = readSheetTable(es.path, es.sheetName);
+    normalizeTextSource(table, es.path);
+    es.headers = table.headers;
+    if (mainTable) {
+      es.suggestions = mergeSources.suggestJoinKeys(mainTable, table, { synonymGroups: getSynonymGroups() });
+      const keysValid = es.keyMain && mainTable.headers.includes(es.keyMain) && es.headers.includes(es.keyOther);
+      if (resetKeys || !keysValid) {
+        const best = es.suggestions[0];
+        es.keyMain = best ? best.main : '';
+        es.keyOther = best ? best.other : '';
+      }
+    } else {
+      es.suggestions = [];
+    }
+  } catch (err) {
+    es.headers = [];
+    es.suggestions = [];
+    es.error = friendlyErrorMessage(err);
+  }
+}
+
+function refreshExtraSources({ resetKeys = false } = {}) {
+  if (extraSources.length === 0) return;
+  const mainTable = readMainTableForMerge();
+  extraSources.forEach((es) => loadExtraSource(es, mainTable, { resetKeys }));
+  renderExtraSources();
+}
+
+function renderExtraSources() {
+  extraSourceList.innerHTML = '';
+  const mainHeaders = (() => {
+    const t = fileAPath ? readMainTableForMerge() : null;
+    return t ? t.headers : [];
+  })();
+  extraSources.forEach((es) => {
+    const item = document.createElement('div');
+    item.className = 'extra-source';
+    item.dataset.id = String(es.id);
+
+    const title = document.createElement('div');
+    title.className = 'extra-source-title';
+    const name = document.createElement('b');
+    name.textContent = path.basename(es.path);
+    title.appendChild(name);
+    if (es.sheetNames.length > 1) {
+      const sheetSelect = document.createElement('select');
+      sheetSelect.className = 'extra-sheet';
+      sheetSelect.setAttribute('aria-label', `${path.basename(es.path)} ${es.sheetUnit} 선택`);
+      es.sheetNames.forEach((n) => sheetSelect.appendChild(new Option(n, n)));
+      sheetSelect.value = es.sheetName;
+      sheetSelect.addEventListener('change', () => changeExtraSource(es, () => {
+        es.sheetName = sheetSelect.value;
+        loadExtraSource(es, readMainTableForMerge(), { resetKeys: true });
+      }));
+      title.appendChild(sheetSelect);
+    }
+    const spacer = document.createElement('span');
+    spacer.className = 'wb-spacer';
+    title.appendChild(spacer);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn ghost small extra-remove';
+    remove.textContent = '빼기';
+    remove.setAttribute('aria-label', `${path.basename(es.path)} 합치기에서 빼기`);
+    remove.addEventListener('click', () => changeExtraSource(es, () => {
+      extraSources = extraSources.filter((x) => x !== es);
+    }));
+    title.appendChild(remove);
+    item.appendChild(title);
+
+    if (es.error) {
+      const err = document.createElement('div');
+      err.className = 'extra-source-error';
+      err.textContent = `읽지 못했습니다: ${es.error}`;
+      item.appendChild(err);
+      extraSourceList.appendChild(item);
+      return;
+    }
+
+    const keyRow = document.createElement('div');
+    keyRow.className = 'extra-source-keys';
+    const keySelect = (options, value, label, onChange) => {
+      const sel = document.createElement('select');
+      sel.setAttribute('aria-label', label);
+      sel.appendChild(new Option('-- 기준 컬럼 --', ''));
+      options.forEach((h) => sel.appendChild(new Option(h, h)));
+      sel.value = value || '';
+      sel.addEventListener('change', () => changeExtraSource(es, () => onChange(sel.value)));
+      return sel;
+    };
+    const lab = (text) => {
+      const s = document.createElement('span');
+      s.className = 'extra-label';
+      s.textContent = text;
+      return s;
+    };
+    keyRow.append(
+      lab('기준'),
+      keySelect(mainHeaders, es.keyMain, '원본(A)의 기준 컬럼', (v) => {
+        es.keyMain = v;
+      }),
+      lab('='),
+      keySelect(es.headers, es.keyOther, `${es.label}의 기준 컬럼`, (v) => {
+        es.keyOther = v;
+      })
+    );
+    const modeSelect = document.createElement('select');
+    modeSelect.setAttribute('aria-label', '합치는 방식');
+    modeSelect.appendChild(new Option('원본(A)에 있는 행만', 'left'));
+    modeSelect.appendChild(new Option('양쪽 행 모두', 'outer'));
+    modeSelect.value = es.mode;
+    modeSelect.addEventListener('change', () => changeExtraSource(es, () => {
+      es.mode = modeSelect.value;
+    }));
+    keyRow.append(lab('행'), modeSelect);
+    item.appendChild(keyRow);
+
+    const hint = document.createElement('div');
+    hint.className = 'extra-source-hint';
+    const chosen = es.suggestions.find((s) => s.main === es.keyMain && s.other === es.keyOther);
+    if (!fileAPath) hint.textContent = '원본(A)을 먼저 고르면 기준 컬럼을 추천합니다.';
+    else if (chosen) hint.textContent = `${chosen === es.suggestions[0] ? '추천' : '후보'}: ${chosen.reasons.join(' · ')}`;
+    else if (es.keyMain && es.keyOther) hint.textContent = '직접 고른 기준입니다. 값이 얼마나 겹치는지는 [구조 분석] 결과에서 확인하세요.';
+    else {
+      hint.textContent = '값이 겹치는 기준 컬럼을 찾지 못했습니다. 직접 골라 주세요.';
+      hint.classList.add('warn');
+    }
+    item.appendChild(hint);
+    extraSourceList.appendChild(item);
+  });
+}
+
+/** 합치기 설정을 바꾼다: 분석 결과가 새 설정과 어긋나지 않도록(고친 값이 있으면 확인 후) 초기화 */
+async function changeExtraSource(es, apply) {
+  if (source && !(await confirmDiscardOverrides('원본 합치기 설정을 바꿀까요?'))) {
+    renderExtraSources();
+    return;
+  }
+  apply();
+  if (source) {
+    resetAnalysisState();
+    log('원본 합치기 설정이 바뀌었습니다. [구조 분석]을 다시 실행하세요.', 'warn');
+  }
+  renderExtraSources();
+}
+
+document.getElementById('btnAddSource').addEventListener('click', async () => {
+  try {
+    const paths = await ipcRenderer.invoke('dialog:openFile', { filters: DATA_FILE_FILTERS, multi: false });
+    if (!paths || paths.length === 0) return;
+    const p = paths[0];
+    const workbook = readWorkbookSmart(p);
+    const sheetNames = workbook.SheetNames || [];
+    const es = {
+      id: ++extraSourceSeq,
+      path: p,
+      label: makeSourceLabel(p),
+      sheetNames,
+      sheetUnit: workbook.sheetUnitLabel || '시트',
+      sheetName: sheetNames.includes(workbook.preferredSheetName) ? workbook.preferredSheetName : sheetNames[0],
+      headers: [],
+      keyMain: '',
+      keyOther: '',
+      mode: 'left',
+      suggestions: [],
+      error: '',
+    };
+    await changeExtraSource(es, () => {
+      loadExtraSource(es, readMainTableForMerge(), { resetKeys: true });
+      extraSources.push(es);
+    });
+    log(`합칠 원본 추가: ${p}${es.keyMain ? ` (기준 ${es.keyMain} = ${es.keyOther})` : ''}`);
+  } catch (err) {
+    notifyError('원본 추가 중 오류가 발생했습니다', err);
+  }
+});
+
+/** [구조 분석] 때: 첫 원본에 추가 원본들을 합친 표. 추가 원본이 없으면 첫 원본 그대로 */
+function joinExtraSources(mainTable) {
+  if (extraSources.length === 0) return mainTable;
+  const others = extraSources.map((es) => {
+    if (es.error) throw new Error(`추가 원본 "${path.basename(es.path)}"을(를) 읽지 못했습니다: ${es.error}`);
+    if (!es.keyMain || !es.keyOther) throw new Error(`추가 원본 "${path.basename(es.path)}"의 기준 컬럼을 고르세요.`);
+    if (!mainTable.headers.includes(es.keyMain)) throw new Error(`원본(A)에 기준 컬럼 "${es.keyMain}"이(가) 없습니다. 합치기 설정을 확인하세요.`);
+    const table = readSheetTable(es.path, es.sheetName);
+    normalizeTextSource(table, es.path, es.label);
+    if (!table.headers.includes(es.keyOther)) throw new Error(`"${path.basename(es.path)}"에 기준 컬럼 "${es.keyOther}"이(가) 없습니다.`);
+    return { label: es.label, table, keyMain: es.keyMain, keyOther: es.keyOther, mode: es.mode };
+  });
+  const { table, reports } = mergeSources.joinTables(mainTable, others);
+  reports.forEach((r) => log(`원본 합치기 — ${mergeSources.describeJoinReport(r)}`, r.unmatchedRows || r.duplicateRows ? 'warn' : 'ok'));
+  return { ...mainTable, ...table, joinReports: reports };
+}
+
+function renderMergeReport() {
+  mergeReportEl.innerHTML = '';
+  const reports = source ? source.joinReports : [];
+  mergeReportEl.hidden = reports.length === 0;
+  reports.forEach((r) => {
+    const line = document.createElement('div');
+    line.className = `merge-report-line${r.unmatchedRows || r.duplicateRows ? ' warn' : ''}`;
+    line.textContent = mergeSources.describeJoinReport(r);
+    mergeReportEl.appendChild(line);
+  });
+}
+
+/** 원본 표(합친 결과)에 화면용 정보(컬럼별 앞쪽 값, 값 모양, 값이 모두 빈 컬럼)를 붙인다 */
+function prepareSource(table) {
   const samples = {};
   const valueKinds = {};
   const emptyColumns = new Set();
@@ -767,7 +1049,8 @@ function prepareSource(table, filePath) {
     samples,
     valueKinds,
     emptyColumns,
-    numericText,
+    columnOrigin: table.columnOrigin || {},
+    joinReports: table.joinReports || [],
   };
 }
 
@@ -804,6 +1087,7 @@ document.getElementById('btnAnalyze').addEventListener('click', async () => {
     if (source && !(await confirmDiscardOverrides('다시 분석할까요?'))) return;
     log(`구조 분석을 시작합니다... (A 시트: ${sheetAName || '첫 번째 시트'}, B 시트: ${sheetBName || '첫 번째 시트'})`);
     const resultA = readSheetTable(fileAPath, sheetAName);
+    normalizeTextSource(resultA, fileAPath, '원본(A)');
     const resultB = extractHeaders(fileBPath, sheetBName);
     [
       ['원본(A)', resultA.headerRowIndex],
@@ -819,17 +1103,21 @@ document.getElementById('btnAnalyze').addEventListener('click', async () => {
       if (renamed.length > 0) log(`${label} 파일에 이름이 같은 컬럼이 있어 ${renamed.join(', ')}(으)로 구분했습니다.`, 'warn');
     });
 
+    const combined = joinExtraSources(resultA);
+
     resetAnalysisState();
-    source = prepareSource(resultA, fileAPath);
-    headersA = resultA.headers;
+    source = prepareSource(combined);
+    headersA = combined.headers;
+    renderMergeReport();
     headersB = resultB.headers;
     labelsB = resultB.labels;
-    log(`원본(A) 컬럼 ${headersA.length}개, 타겟(B) 컬럼 ${headersB.length}개 발견`, 'ok');
+    log(`원본(A) 컬럼 ${headersA.length}개${extraSources.length ? `(추가 원본 ${extraSources.length}개 합침)` : ''}, 타겟(B) 컬럼 ${headersB.length}개 발견`, 'ok');
 
     runAutoMapping();
     invalidate();
     workbench.onAnalyzed();
     workbench.render();
+    renderSplitOptions({ recompute: true });
     analyzeStatus.textContent = '분석 완료';
     analyzeStatus.className = 'pill ok';
     log('매핑 작업대가 준비되었습니다. 연결과 결과 미리보기를 확인하세요.', 'ok');
@@ -863,6 +1151,8 @@ document.getElementById('btnSaveMapping').addEventListener('click', async () => 
       targetSheet: sheetBName,
       mapping,
       requiredColumns: Array.from(requiredColumns),
+      splitBy: splitBy || undefined,
+      splitIncludeAll: splitBy ? splitIncludeAll.checked : undefined,
     };
     safeWriteFileSync(savePath, JSON.stringify(payload, null, 2));
     log(`매핑 규칙이 저장되었습니다: ${savePath}`, 'ok');
@@ -918,6 +1208,7 @@ document.getElementById('btnLoadMapping').addEventListener('click', async () => 
 
     const { ok, appliedCount, skippedCount } = await applyLoadedMapping('매핑 규칙 불러오기', 'rule', loadedMapping, payload.requiredColumns);
     if (!ok) return;
+    applyLoadedSplit(payload);
     currentPresetId = null;
     if (presetSelect) presetSelect.value = '';
     log(`매핑 규칙을 불러왔습니다: ${paths[0]} (적용 ${appliedCount}건, 불일치 ${skippedCount}건)`, 'ok');
@@ -995,11 +1286,24 @@ function getPresetSuggestion() {
   return best;
 }
 
+/** 프리셋·규칙 파일에 시트 나누기 설정이 있으면 적용(이 양식에 그 컬럼이 있을 때만) */
+function applyLoadedSplit(payload) {
+  if (!payload || typeof payload.splitBy !== 'string') return;
+  if (!headersB.includes(payload.splitBy)) {
+    log(`저장된 시트 나누기 컬럼 "${payload.splitBy}"이(가) 이 양식에 없어 한 시트로 저장합니다.`, 'warn');
+    return;
+  }
+  splitBy = payload.splitBy;
+  splitIncludeAll.checked = !!payload.splitIncludeAll;
+  renderSplitOptions();
+}
+
 async function applyPresetById(id) {
   const preset = presets.find((p) => p.id === id);
   if (!preset) return false;
   const { ok, appliedCount, skippedCount } = await applyLoadedMapping(`프리셋 "${preset.name}" 적용`, 'preset', preset.mapping || {}, preset.requiredColumns);
   if (!ok) return false;
+  applyLoadedSplit(preset);
   currentPresetId = id;
   presetSuggestionDismissed = true;
   renderPresetSelect();
@@ -1104,6 +1408,8 @@ document.getElementById('btnSavePreset').addEventListener('click', async () => {
       targetHeaders: headersB,
       mapping: { ...mapping },
       requiredColumns: Array.from(requiredColumns),
+      splitBy: splitBy || undefined,
+      splitIncludeAll: splitBy ? splitIncludeAll.checked : undefined,
       createdAt: existingRecord ? existingRecord.createdAt : now,
       updatedAt: now,
     };
@@ -1181,9 +1487,18 @@ const convertReviewCancelBtn = document.getElementById('convertReviewCancel');
  * 문제가 있어도 저장을 막지는 않고 사용자가 확인 후 진행/취소를 선택한다
  * (CSV 임포트 도구들의 allowInvalidSubmit 기본 동작과 같은 취지).
  */
-function showConvertReviewModal(derived) {
+function showConvertReviewModal(derived, sheets) {
   const lines = [];
   lines.push(`<div class="review-line ok">총 <b>${derived.rowCount}</b>행을 저장합니다.</div>`);
+  if (sheets) {
+    const parts = sheets.filter((s) => !s.isAll).map((s) => `${s.name} ${s.rows.length}행`);
+    const shown = parts.slice(0, 8).join(' · ') + (parts.length > 8 ? ` 외 ${parts.length - 8}개` : '');
+    lines.push(`<div class="review-line info">${xmlEscape(labelOfB(splitBy))} 값마다 시트 ${parts.length}개로 나눠 저장${sheets.some((s) => s.isAll) ? '(맨 앞에 전체 시트 포함)' : ''}: ${xmlEscape(shown)}</div>`);
+    if (parts.length > SPLIT_WARN_SHEETS) lines.push(`<div class="review-line warn">시트가 ${parts.length}개로 많습니다. 나눌 컬럼이 맞는지 확인하세요.</div>`);
+  }
+  (source.joinReports || []).forEach((r) => {
+    lines.push(`<div class="review-line ${r.unmatchedRows || r.duplicateRows ? 'warn' : 'ok'}">원본 합치기 — ${xmlEscape(mergeSources.describeJoinReport(r))}</div>`);
+  });
 
   const missingEntries = Object.entries(derived.missingByColumn).filter(([, count]) => count > 0);
   if (missingEntries.length > 0) {
@@ -1257,39 +1572,21 @@ function toExcelDateSerial(d) {
  * [Load] 변환된 데이터를 서식이 적용된 엑셀 파일로 내보낸다 (exceljs 사용).
  * - 헤더 행: 배경색 + 흰 글자 + 굵게 + 테두리, 첫 행 고정(스크롤해도 헤더 유지)
  * - 열 너비: 헤더/값의 실제 표시 폭에 맞춰 자동 조정 → "###" 잘림 방지
- * - 숫자 열: 빈 값을 뺀 모든 값이 숫자인 열은 실제 숫자로 저장하고 천단위 구분(#,##0)
- *   서식과 우측 정렬을 적용한다. 원본이 엑셀이면 원본에서 숫자였던 값만 숫자로 본다 —
- *   원본 작성자가 일부러 "텍스트"로 넣은 사번·계좌번호 같은 숫자 글자를 바꾸지 않기
- *   위함. 값의 종류 정보가 없는 원본(CSV, 한글 문서 표: numericText)은 "안전한 숫자
- *   글자"(isSafeNumericString)도 숫자로 바꾼다. columnKinds를 넘기면(매핑 작업대) 그
- *   판정을 그대로 쓰고, 숫자 열 안에서 글자로 고친 칸은 그 칸만 글자로 쓴다.
+ * - 숫자 열: 빈 값을 뺀 모든 값이 숫자인 열은 천단위 구분(#,##0) 서식과 우측 정렬을 적용한다.
+ *   숫자로 저장하는 것은 실제 숫자 값뿐이다 — 엑셀 원본은 원본에서 숫자였던 칸만, CSV·한글 문서
+ *   표는 읽을 때 "안전한 숫자 글자"만 있는 열을 숫자로 바꿔 두므로(normalizeTextSource) 사번·
+ *   계좌번호처럼 일부러 글자로 둔 값은 바뀌지 않는다. columnKinds를 넘기면(매핑 작업대) 그 판정을
+ *   그대로 쓰고, 숫자 열 안에서 글자로 고친 칸은 그 칸만 글자로 쓴다.
  * - 날짜: 엑셀 날짜 일련번호 + "yyyy-mm-dd"(시각이 있으면 "yyyy-mm-dd hh:mm:ss") 서식.
  *   JS Date를 exceljs에 그대로 넘기면 UTC 기준으로 저장되어 한국 시간에서는 하루 전
  *   날짜가 되고 표시 형식도 미국식(mm-dd-yy)이 되므로 직접 일련번호로 바꾼다.
  * - numberFormats: 원본 컬럼의 숫자 표시 형식(%, 통화 등). 있으면 기본 천단위 서식 대신 쓴다.
+ * - sheets: [{ name, rows }]를 주면 시트 여러 개로 나눠 쓴다(열 판정은 전체 행 기준으로 같게).
  * headers는 값을 찾을 컬럼키, labels는 헤더 행에 보일 이름이다.
  */
-async function buildStyledExcelBuffer(headers, labels, rows, sheetName, { numericText = false, numberFormats = {}, columnKinds = null } = {}) {
+async function buildStyledExcelBuffer(headers, labels, rows, sheetName, { numberFormats = {}, columnKinds = null, sheets = null } = {}) {
   const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet(sheetName || 'Converted');
 
-  worksheet.addRow(labels);
-  worksheet.views = [{ state: 'frozen', ySplit: 1 }];
-
-  const headerRow = worksheet.getRow(1);
-  headerRow.eachCell((cell) => {
-    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3864' } };
-    cell.alignment = { vertical: 'middle', horizontal: 'center' };
-    cell.border = {
-      top: { style: 'thin', color: { argb: 'FFB0B0B0' } },
-      bottom: { style: 'thin', color: { argb: 'FFB0B0B0' } },
-      left: { style: 'thin', color: { argb: 'FFB0B0B0' } },
-      right: { style: 'thin', color: { argb: 'FFB0B0B0' } },
-    };
-  });
-
-  const isNumericValue = (v) => isNumericCell(v, numericText);
   const columnIsNumeric = columnKinds
     ? columnKinds.map((k) => k.kind === 'number')
     : headers.map((h) => {
@@ -1298,49 +1595,162 @@ async function buildStyledExcelBuffer(headers, labels, rows, sheetName, { numeri
           const v = row[h];
           if (isEmptyValue(v)) continue;
           sawAny = true;
-          if (!isNumericValue(v)) return false;
+          if (!isNumericCell(v)) return false;
         }
         return sawAny;
       });
   const columnHasDecimal = headers.map(
-    (h, i) => columnIsNumeric[i] && rows.some((row) => isNumericValue(row[h]) && !Number.isInteger(Number(row[h])))
+    (h, i) => columnIsNumeric[i] && rows.some((row) => isNumericCell(row[h]) && !Number.isInteger(Number(row[h])))
   );
 
-  rows.forEach((row) => {
-    const values = headers.map((h, i) => {
-      const raw = row[h];
-      if (isEmptyValue(raw)) return '';
-      if (raw instanceof Date) return toExcelDateSerial(raw);
-      return columnIsNumeric[i] && isNumericValue(raw) ? Number(raw) : raw;
-    });
-    const excelRow = worksheet.addRow(values);
-    excelRow.eachCell((cell, colNumber) => {
-      const i = colNumber - 1;
-      const raw = row[headers[i]];
-      if (raw instanceof Date) {
-        const hasTime = raw.getHours() !== 0 || raw.getMinutes() !== 0 || raw.getSeconds() !== 0;
-        cell.numFmt = hasTime ? 'yyyy-mm-dd hh:mm:ss' : 'yyyy-mm-dd';
-        cell.alignment = { horizontal: 'center' };
-      } else if (columnIsNumeric[i] && isNumericValue(raw)) {
-        cell.numFmt = numberFormats[headers[i]] || (columnHasDecimal[i] ? '#,##0.######' : '#,##0');
-        cell.alignment = { horizontal: 'right' };
-      } else {
-        cell.alignment = { horizontal: 'left' };
-      }
-    });
-  });
+  const writeSheet = (name, sheetRows) => {
+    const worksheet = workbook.addWorksheet(name || 'Converted');
+    worksheet.addRow(labels);
+    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
 
-  headers.forEach((h, i) => {
-    let maxWidth = visualWidth(labels[i]);
-    rows.forEach((row) => {
-      const v = row[h];
-      if (isEmptyValue(v)) return;
-      maxWidth = Math.max(maxWidth, visualWidth(formatPreviewValue(v)));
+    const headerRow = worksheet.getRow(1);
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3864' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFB0B0B0' } },
+        bottom: { style: 'thin', color: { argb: 'FFB0B0B0' } },
+        left: { style: 'thin', color: { argb: 'FFB0B0B0' } },
+        right: { style: 'thin', color: { argb: 'FFB0B0B0' } },
+      };
     });
-    worksheet.getColumn(i + 1).width = Math.min(40, Math.max(8, Math.ceil(maxWidth) + 2));
-  });
 
+    sheetRows.forEach((row) => {
+      const values = headers.map((h) => {
+        const raw = row[h];
+        if (isEmptyValue(raw)) return '';
+        if (raw instanceof Date) return toExcelDateSerial(raw);
+        return raw;
+      });
+      const excelRow = worksheet.addRow(values);
+      excelRow.eachCell((cell, colNumber) => {
+        const i = colNumber - 1;
+        const raw = row[headers[i]];
+        if (raw instanceof Date) {
+          const hasTime = raw.getHours() !== 0 || raw.getMinutes() !== 0 || raw.getSeconds() !== 0;
+          cell.numFmt = hasTime ? 'yyyy-mm-dd hh:mm:ss' : 'yyyy-mm-dd';
+          cell.alignment = { horizontal: 'center' };
+        } else if (columnIsNumeric[i] && isNumericCell(raw)) {
+          cell.numFmt = numberFormats[headers[i]] || (columnHasDecimal[i] ? '#,##0.######' : '#,##0');
+          cell.alignment = { horizontal: 'right' };
+        } else {
+          cell.alignment = { horizontal: 'left' };
+        }
+      });
+    });
+
+    headers.forEach((h, i) => {
+      let maxWidth = visualWidth(labels[i]);
+      sheetRows.forEach((row) => {
+        const v = row[h];
+        if (isEmptyValue(v)) return;
+        maxWidth = Math.max(maxWidth, visualWidth(formatPreviewValue(v)));
+      });
+      worksheet.getColumn(i + 1).width = Math.min(40, Math.max(8, Math.ceil(maxWidth) + 2));
+    });
+  };
+
+  if (sheets && sheets.length > 0) sheets.forEach((s) => writeSheet(s.name, s.rows));
+  else writeSheet(sheetName, rows);
   return workbook.xlsx.writeBuffer();
+}
+
+/* -------------------------------------------------------------------------
+ * 결과 시트 나누기: 타겟 컬럼 하나의 값마다 시트를 따로 만든다(예: 부서명 → 영업팀·개발팀 시트).
+ * 나눌 만한 컬럼(값 종류가 적고 대부분 채워진 컬럼, 이름이 부서·지점·구분 류)을 추천하지만
+ * 기본은 한 시트로 저장이다.
+ * ------------------------------------------------------------------------- */
+
+const splitSelect = document.getElementById('splitSelect');
+const splitIncludeAll = document.getElementById('splitIncludeAll');
+const splitHint = document.getElementById('splitHint');
+let splitBy = '';
+let splitSuggestions = [];
+const SPLIT_WARN_SHEETS = 30;
+
+/** 시트 나누기 묶음 기준: 저장될 엑셀에 보이는 글자 */
+function splitKeyOf(i, b) {
+  const derived = getDerived();
+  return displayValue(derived.value(i, b), b);
+}
+
+function computeSplitSuggestions() {
+  const derived = getDerived();
+  if (!derived) return [];
+  return mergeSources.suggestSplitColumns(headersB, derived.rowCount, (i, b) => valueToken(derived.value(i, b)));
+}
+
+/** 나누기 선택 목록을 다시 그린다. recompute면 추천을 다시 계산(값이 바뀌었을 수 있음) */
+function renderSplitOptions({ recompute = false } = {}) {
+  if (!source) {
+    splitBy = '';
+    splitSuggestions = [];
+    splitSelect.innerHTML = '';
+    splitSelect.appendChild(new Option('한 시트로 저장', ''));
+    splitSelect.disabled = true;
+    splitIncludeAll.disabled = true;
+    splitIncludeAll.checked = false;
+    splitHint.textContent = '';
+    return;
+  }
+  if (recompute) splitSuggestions = computeSplitSuggestions();
+  if (splitBy && !headersB.includes(splitBy)) splitBy = '';
+  splitSelect.innerHTML = '';
+  splitSelect.appendChild(new Option('한 시트로 저장', ''));
+  const suggested = new Set(splitSuggestions.map((s) => s.column));
+  if (splitSuggestions.length > 0) {
+    const group = document.createElement('optgroup');
+    group.label = '추천';
+    splitSuggestions.forEach((s) => group.appendChild(new Option(`${labelOfB(s.column)} 값마다 시트 나누기 (${s.reasons.join(' · ')})`, s.column)));
+    splitSelect.appendChild(group);
+  }
+  const rest = headersB.filter((b) => !suggested.has(b));
+  if (rest.length > 0) {
+    const group = document.createElement('optgroup');
+    group.label = '다른 컬럼';
+    rest.forEach((b) => group.appendChild(new Option(`${labelOfB(b)} 값마다 시트 나누기`, b)));
+    splitSelect.appendChild(group);
+  }
+  splitSelect.value = splitBy;
+  splitSelect.disabled = false;
+  splitIncludeAll.disabled = !splitBy;
+  if (splitBy) {
+    const count = mergeSources.groupRowsBy(source.rows.length, (i) => splitKeyOf(i, splitBy)).length;
+    splitHint.textContent = `${labelOfB(splitBy)} 값마다 시트 ${count}개${count > SPLIT_WARN_SHEETS ? ' — 시트가 많습니다' : ''}`;
+  } else if (splitSuggestions.length > 0) {
+    const best = splitSuggestions[0];
+    splitHint.textContent = `추천: ${labelOfB(best.column)} 컬럼으로 나누기 (값 ${best.values}종류)`;
+  } else {
+    splitHint.textContent = '';
+  }
+}
+
+splitSelect.addEventListener('change', () => {
+  splitBy = splitSelect.value;
+  if (!splitBy) splitIncludeAll.checked = false;
+  renderSplitOptions();
+});
+// 값을 고친 뒤 목록을 열면 추천을 새로 계산한다(매번 그릴 때 계산하면 큰 표에서 무겁다)
+splitSelect.addEventListener('mousedown', () => renderSplitOptions({ recompute: true }));
+splitSelect.addEventListener('focus', () => renderSplitOptions({ recompute: true }));
+
+/** 저장할 시트 목록. 나누지 않으면 null */
+function buildSplitSheets(derived) {
+  if (!splitBy) return null;
+  const rows = derived.getRows();
+  const used = new Set();
+  const sheets = [];
+  if (splitIncludeAll.checked) sheets.push({ name: mergeSources.sanitizeSheetName(sheetBName || '전체', used), rows, isAll: true });
+  mergeSources.groupRowsBy(derived.rowCount, (i) => splitKeyOf(i, splitBy)).forEach((g) => {
+    sheets.push({ name: mergeSources.sanitizeSheetName(g.key, used), rows: g.indices.map((i) => rows[i]) });
+  });
+  return sheets;
 }
 
 /** 3단계 카드 설명: 몇 행을 저장하고 고친 값이 몇 개 들어가는지 */
@@ -1391,7 +1801,8 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
       log(`모든 컬럼 값이 동일한 중복 행이 ${derived.duplicateCount}건 있습니다.`, 'warn');
     }
 
-    const proceed = await showConvertReviewModal(derived);
+    const sheets = buildSplitSheets(derived);
+    const proceed = await showConvertReviewModal(derived, sheets);
     if (!proceed) {
       log('사용자가 확인 단계에서 취소했습니다. 매핑을 수정한 뒤 다시 시도하세요.', 'warn');
       return;
@@ -1415,13 +1826,13 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
 
     // [Load] 헤더 서식·열 너비·숫자 서식을 적용하여 완성된 엑셀 파일로 저장한다
     const outputBuffer = await buildStyledExcelBuffer(headersB, labelsB, derived.getRows(), sheetBName, {
-      numericText: source.numericText,
       numberFormats,
       columnKinds: derived.kinds,
+      sheets,
     });
     safeWriteFileSync(savePath, outputBuffer);
 
-    log(`변환된 파일이 저장되었습니다: ${savePath}${overrides.size > 0 ? ` (직접 고친 값 ${overrides.size}개 포함)` : ''}`, 'ok');
+    log(`변환된 파일이 저장되었습니다: ${savePath}${sheets ? ` (시트 ${sheets.length}개)` : ''}${overrides.size > 0 ? ` (직접 고친 값 ${overrides.size}개 포함)` : ''}`, 'ok');
     alert('✅ 변환이 완료되었습니다.');
   } catch (err) {
     notifyError('데이터 변환 중 오류가 발생했습니다', err);

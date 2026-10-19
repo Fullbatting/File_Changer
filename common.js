@@ -1181,6 +1181,7 @@ module.exports = {
   levenshteinDistance,
   decomposeHangulToJamo,
   findAutoMatch,
+  getSynonymGroups: () => synonymGroups,
   getChoseong,
   matchesColumnSearch,
   detectValueKind,

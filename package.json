@@ -10,7 +10,9 @@
   },
   "scripts": {
     "start": "electron .",
-    "test:e2e": "node tests/e2e/run.js"
+    "test:e2e": "node tests/e2e/run.js",
+    "test:unit": "node tests/unit/merge-sources.test.js",
+    "test": "npm run test:unit && npm run test:e2e"
   },
   "dependencies": {
     "docxtemplater": "^3.47.2",

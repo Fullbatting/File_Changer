@@ -765,6 +765,12 @@ function createWorkbench(api) {
       .join(' · ');
   }
 
+  /** 원본 합치기로 들어온 컬럼이면 어느 파일에서 왔는지 작은 표시 */
+  function originTag(a) {
+    const origin = st.source.columnOrigin && st.source.columnOrigin[a];
+    return origin ? el('span', { className: 'wb-origin', text: origin, title: `${origin}에서 합친 컬럼` }) : null;
+  }
+
   /** b에 추천할 원본 컬럼(다른 곳에 연결 안 된 것, 값이 있는 것, 점수 기준 이상) */
   function recommendFor(b, limit, used) {
     if (!ui.recCache.has(b)) {
@@ -788,7 +794,7 @@ function createWorkbench(api) {
       left = el(
         'div',
         { className: 'wb-a-card', dataset: { dragA: a, pick: b }, title: '끌어서 다른 타겟 컬럼에도 연결할 수 있습니다' },
-        el('span', { className: 'wb-card-text' }, el('b', { text: a }), n > 1 ? el('span', { className: 'wb-tag', text: `${n}곳` }) : null, el('span', { className: 'wb-sample', text: sampleText(a) }))
+        el('span', { className: 'wb-card-text' }, el('b', { text: a }), n > 1 ? el('span', { className: 'wb-tag', text: `${n}곳` }) : null, originTag(a), el('span', { className: 'wb-sample', text: sampleText(a) }))
       );
     } else {
       const ambiguous = (st.autoCandidates[b] || []).filter((x) => x !== a);
@@ -876,6 +882,7 @@ function createWorkbench(api) {
           'div',
           { className: `wb-tray-item${st.source.emptyColumns.has(a) ? ' empty' : ''}`, dataset: { dragA: a }, title: '끌어서 타겟 컬럼에 놓으면 연결됩니다' },
           icon('grip', 'wb-grip'),
+          originTag(a),
           el('span', { className: 'wb-card-text one-line' }, el('b', { text: a }), ' ', el('span', { className: 'wb-sample', text: st.source.emptyColumns.has(a) ? '(값 없음)' : sampleText(a, 2) }))
         )
       );
@@ -1266,7 +1273,8 @@ function createWorkbench(api) {
         'button',
         { type: 'button', className: 'wb-pick-item', role: 'option', dataset: { a } },
         el('span', { className: 'wb-card-text one-line' }, el('b', { text: a }), ' ', el('span', { className: 'wb-sample', text: st.source.emptyColumns.has(a) ? '(값 없음)' : sampleText(a, 2) }), note ? el('span', { className: 'wb-muted', text: ` · ${note}` }) : null),
-        ...reasons.map((r) => el('span', { className: 'wb-reason', text: r }))
+        ...reasons.map((r) => el('span', { className: 'wb-reason', text: r })),
+        originTag(a)
       );
       btn.addEventListener('click', () => choosePicked(b, a));
       p.list.appendChild(btn);
@@ -1360,10 +1368,12 @@ function createWorkbench(api) {
       return;
     }
     const lazy = st.headersA.length * st.headersB.length > LIST_LAZY_OPTIONS;
+    const origins = st.source.columnOrigin || {};
+    const optionText = (a) => (origins[a] ? `${a} · ${origins[a]}` : a);
     const fillOptions = (select, current) => {
       select.innerHTML = '';
       select.appendChild(el('option', { value: '', text: '-- 선택 안함 --' }));
-      st.headersA.forEach((a) => select.appendChild(el('option', { value: a, text: a })));
+      st.headersA.forEach((a) => select.appendChild(el('option', { value: a, text: optionText(a) })));
       select.value = current || '';
     };
     const buildRow = (b) => {
@@ -1372,7 +1382,7 @@ function createWorkbench(api) {
       const select = el('select', { dataset: { bcolumn: b }, 'aria-label': `${api.labelOfB(b)}의 원본 컬럼` });
       if (lazy) {
         select.appendChild(el('option', { value: '', text: '-- 선택 안함 --' }));
-        if (a) select.appendChild(el('option', { value: a, text: a }));
+        if (a) select.appendChild(el('option', { value: a, text: optionText(a) }));
         select.value = a || '';
         const fill = () => {
           if (select.dataset.filled) return;
