@@ -2149,6 +2149,23 @@ table.wb-grid {
   font-weight: 600;
 }
 
+.merge-report-detail {
+  padding-left: 14px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.merge-report-detail.warn {
+  color: var(--m-fuzzy-text);
+}
+
+.extra-zero {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
 .wb-origin {
   align-self: flex-start;
   padding: 0 6px;

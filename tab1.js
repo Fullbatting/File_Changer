@@ -885,7 +885,8 @@ bindTab1File('B', dropB, fileNameB, sheetRowB, sheetSelectB);
 
 const extraSourceList = document.getElementById('extraSourceList');
 const mergeReportEl = document.getElementById('mergeReport');
-let extraSources = []; // [{ id, path, label, sheetName, sheetNames, sheetUnit, headers, keyMain, keyOther, mode, suggestions, error }]
+// [{ id, path, label, sheetName, sheetNames, sheetUnit, headers, table, keyMain, keyOther, mode, dupPolicy, ignoreZeros, suggestions, recognition, error }]
+let extraSources = [];
 let extraSourceSeq = 0;
 
 /** 파일 이름(확장자 제외)으로 짧은 라벨. 겹치면 뒤에 번호 */
@@ -915,6 +916,7 @@ function loadExtraSource(es, mainTable, { resetKeys = false } = {}) {
     const table = readSheetTable(es.path, es.sheetName);
     normalizeTextSource(table, es.path);
     es.headers = table.headers;
+    es.table = table;
     es.recognition = describeRecognition(table.report, table.fileInfo).filter((item) => item.warn);
     if (mainTable) {
       es.suggestions = mergeSources.suggestJoinKeys(mainTable, table, { synonymGroups: getSynonymGroups() });
@@ -943,10 +945,8 @@ function refreshExtraSources({ resetKeys = false } = {}) {
 
 function renderExtraSources() {
   extraSourceList.innerHTML = '';
-  const mainHeaders = (() => {
-    const t = fileAPath ? readMainTableForMerge() : null;
-    return t ? t.headers : [];
-  })();
+  const mainTable = fileAPath ? readMainTableForMerge() : null;
+  const mainHeaders = mainTable ? mainTable.headers : [];
   extraSources.forEach((es) => {
     const item = document.createElement('div');
     item.className = 'extra-source';
@@ -1030,6 +1030,29 @@ function renderExtraSources() {
     keyRow.append(lab('행'), modeSelect);
     item.appendChild(keyRow);
 
+    // 기준값이 겹칠 때(한 사번이 두 행) 어떻게 할지, 앞자리 0을 무시할지 — 둘 다 사용자가 고른다
+    const optionRow = document.createElement('div');
+    optionRow.className = 'extra-source-keys';
+    const dupSelect = document.createElement('select');
+    dupSelect.setAttribute('aria-label', '기준값이 겹칠 때');
+    dupSelect.appendChild(new Option('첫 행만 잇기', 'first'));
+    dupSelect.appendChild(new Option('모두 잇기(행이 늘어남)', 'all'));
+    dupSelect.value = es.dupPolicy || 'first';
+    dupSelect.addEventListener('change', () => changeExtraSource(es, () => {
+      es.dupPolicy = dupSelect.value;
+    }));
+    const zeroLabel = document.createElement('label');
+    zeroLabel.className = 'extra-zero';
+    const zeroBox = document.createElement('input');
+    zeroBox.type = 'checkbox';
+    zeroBox.checked = !!es.ignoreZeros;
+    zeroBox.addEventListener('change', () => changeExtraSource(es, () => {
+      es.ignoreZeros = zeroBox.checked;
+    }));
+    zeroLabel.append(zeroBox, document.createTextNode(' 앞자리 0 무시(00123 = 123)'));
+    optionRow.append(lab('겹치는 기준값'), dupSelect, zeroLabel);
+    item.appendChild(optionRow);
+
     const hint = document.createElement('div');
     hint.className = 'extra-source-hint';
     const chosen = es.suggestions.find((s) => s.main === es.keyMain && s.other === es.keyOther);
@@ -1041,6 +1064,18 @@ function renderExtraSources() {
       hint.classList.add('warn');
     }
     item.appendChild(hint);
+
+    // 앞자리 0 무시를 고르기 전에: 정확히 비교할 때와 무시할 때 연결되는 행 수, 같아지는 서로 다른 값
+    if (mainTable && es.table && es.keyMain && es.keyOther && mainTable.headers.includes(es.keyMain) && es.headers.includes(es.keyOther)) {
+      const info = mergeSources.analyzeKeyMatch(mainTable, es.keyMain, es.table, es.keyOther);
+      const parts = [`정확히 비교하면 원본(A) ${info.exactMatched}행 연결`];
+      if (info.looseMatched !== info.exactMatched || es.ignoreZeros) parts.push(`앞자리 0을 무시하면 ${info.looseMatched}행 연결`);
+      if (info.collisions) parts.push(`무시하면 서로 다른 값 ${info.collisions}쌍이 같아짐(예: ${info.collisionExamples.join(', ')})`);
+      const counts = document.createElement('div');
+      counts.className = `extra-source-hint extra-match-counts${(es.ignoreZeros && info.collisions) || (!es.ignoreZeros && info.exactMatched === 0) ? ' warn' : ''}`;
+      counts.textContent = parts.join(' · ');
+      item.appendChild(counts);
+    }
     (es.recognition || []).forEach(({ text }) => {
       const note = document.createElement('div');
       note.className = 'extra-source-hint warn';
@@ -1083,6 +1118,8 @@ document.getElementById('btnAddSource').addEventListener('click', async () => {
       keyMain: '',
       keyOther: '',
       mode: 'left',
+      dupPolicy: 'first',
+      ignoreZeros: false,
       suggestions: [],
       error: '',
     };
@@ -1106,10 +1143,10 @@ function joinExtraSources(mainTable) {
     const table = readSheetTable(es.path, es.sheetName);
     normalizeTextSource(table, es.path, es.label);
     if (!table.headers.includes(es.keyOther)) throw new Error(`"${path.basename(es.path)}"에 기준 컬럼 "${es.keyOther}"이(가) 없습니다.`);
-    return { label: es.label, table, keyMain: es.keyMain, keyOther: es.keyOther, mode: es.mode };
+    return { label: es.label, table, keyMain: es.keyMain, keyOther: es.keyOther, mode: es.mode, dupPolicy: es.dupPolicy || 'first', ignoreLeadingZeros: !!es.ignoreZeros };
   });
   const { table, reports } = mergeSources.joinTables(mainTable, others);
-  reports.forEach((r) => log(`원본 합치기 — ${mergeSources.describeJoinReport(r)}`, r.unmatchedRows || r.duplicateRows ? 'warn' : 'ok'));
+  reports.forEach((r) => log(`원본 합치기 — ${mergeSources.describeJoinReport(r)}`, mergeSources.describeJoinReportDetail(r).warn ? 'warn' : 'ok'));
   return { ...mainTable, ...table, joinReports: reports };
 }
 
@@ -1118,10 +1155,18 @@ function renderMergeReport() {
   const reports = source ? source.joinReports : [];
   mergeReportEl.hidden = reports.length === 0;
   reports.forEach((r) => {
+    const detail = mergeSources.describeJoinReportDetail(r);
     const line = document.createElement('div');
-    line.className = `merge-report-line${r.unmatchedRows || r.duplicateRows ? ' warn' : ''}`;
-    line.textContent = mergeSources.describeJoinReport(r);
+    line.className = `merge-report-line${detail.warn ? ' warn' : ''}`;
+    line.textContent = detail.text;
     mergeReportEl.appendChild(line);
+    // 빠진 행·덧붙인 행은 이유별로 행 번호와 함께
+    detail.details.forEach((d) => {
+      const sub = document.createElement('div');
+      sub.className = `merge-report-detail${d.warn ? ' warn' : ''}`;
+      sub.textContent = d.text;
+      mergeReportEl.appendChild(sub);
+    });
   });
 }
 
@@ -1853,7 +1898,7 @@ function buildSplitSheets(derived) {
   const sheets = [];
   if (splitIncludeAll.checked) sheets.push({ name: mergeSources.sanitizeSheetName(sheetBName || '전체', used), rows, isAll: true });
   mergeSources.groupRowsBy(derived.rowCount, (i) => splitKeyOf(i, splitBy)).forEach((g) => {
-    sheets.push({ name: mergeSources.sanitizeSheetName(g.key, used), rows: g.indices.map((i) => rows[i]) });
+    sheets.push({ name: mergeSources.sanitizeSheetName(g.label, used), rows: g.indices.map((i) => rows[i]), blank: g.isBlank });
   });
   return sheets;
 }
