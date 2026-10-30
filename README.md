@@ -57,6 +57,7 @@ npm start                               # 앱 실행 (electron .)
 npm test                                # 단위 테스트 + 화면 자동 테스트 (Linux 서버에서는 xvfb-run -a npm test)
 npm run test:unit                       # 판단 로직 단위 테스트(Electron 없이): 파일 인식·자동 연결·합치기·나누기·저장 후 확인
 npm run test:e2e                        # 화면 자동 테스트 (Linux 서버에서는 xvfb-run -a npm run test:e2e)
+npm run test:legacy                     # 예전 회귀 시나리오(탭1·탭2 기본 흐름, 한글 HWPX 표·템플릿, 전체 기능 점검 3단계). Linux 서버에서는 xvfb-run -a
 npm run bench                           # 크기별 성능 측정(파일 읽기부터 저장 후 확인까지, 시간·최대 메모리)
 ```
 
