@@ -84,6 +84,8 @@ function createHarness(name) {
 
   async function finish() {
     record('렌더러 콘솔 오류 없음', rendererErrors.length === 0, rendererErrors.slice(0, 5));
+    // 검사 항목이 하나도 기록되지 않았다면(시나리오가 중간에 멈춤) 성공으로 보지 않는다
+    if (results.length <= 1) record('시나리오 검사 항목이 실행됨', false, '기록된 검사 항목 없음');
     const failed = results.filter((r) => !r.ok);
     console.log(`\n[${name}] ${results.length - failed.length}/${results.length} 통과`);
     try {
@@ -93,6 +95,12 @@ function createHarness(name) {
       /* 임시 폴더 정리는 실패해도 결과에 영향 없음 */
     }
     app.exit(failed.length > 0 ? 1 : 0);
+  }
+
+  /** 시나리오 도중 예외: 실패로 기록하고 끝낸다(예외를 출력만 하고 성공 종료하지 않도록) */
+  function fail(err) {
+    record('시나리오가 예외 없이 끝까지 실행됨', false, err && err.stack ? err.stack.split('\n').slice(0, 4).join(' | ') : String(err));
+    return finish();
   }
 
   process.on('unhandledRejection', (err) => {
@@ -112,6 +120,7 @@ function createHarness(name) {
     answerConfirm,
     record,
     finish,
+    fail,
     get win() {
       return win;
     },

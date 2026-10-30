@@ -124,7 +124,4 @@ async function run() {
 
 run()
   .then(() => h.finish())
-  .catch((err) => {
-    console.log(`ERROR ${err && err.stack ? err.stack : err}`);
-    h.finish();
-  });
+  .catch((err) => h.fail(err));
