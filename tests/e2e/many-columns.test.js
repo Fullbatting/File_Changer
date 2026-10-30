@@ -46,7 +46,7 @@ async function run() {
   let rows = await rowsShown();
   record('보이는 줄: 확인 필요 4 + 연결 없음 4', JSON.stringify(rows) === JSON.stringify(['입사일자', '직책수당', '주민번호', '계좌번호', '연락처', '국민연금', '주소', '비고']), rows);
   const ambiguous = await js(`({ text: document.querySelector('.wb-row[data-b="주소"] .wb-a-empty').textContent, chips: Array.from(document.querySelectorAll('.wb-row[data-b="주소"] .wb-cand')).map((c) => c.textContent) })`);
-  record('모호해서 자동 연결 안 한 "주소": 후보 2개(주소1·주소2) 표시', ambiguous.text.includes('후보 2개가 비슷함') && JSON.stringify(ambiguous.chips) === JSON.stringify(['주소1', '주소2']), ambiguous);
+  record('모호해서 자동 연결 안 한 "주소": 후보 2개(주소1·주소2) 표시', ambiguous.text.includes('비슷한 이름 후보 2개가 같은 정도') && JSON.stringify(ambiguous.chips) === JSON.stringify(['주소1', '주소2']), ambiguous);
   const tray = await js(`({ count: document.querySelector('#wbTray .wb-count').textContent, footer: document.querySelector('.wb-tray-footer').textContent })`);
   record('트레이: 연결 안 된 원본 9개, 값이 모두 빈 컬럼 6개 숨김', tray.count === '9' && tray.footer.includes('6개 숨김'), tray);
   await js(`document.querySelector('[data-group-toggle="auto"]').click(); true;`);

@@ -797,10 +797,13 @@ function createWorkbench(api) {
         el('span', { className: 'wb-card-text' }, el('b', { text: a }), n > 1 ? el('span', { className: 'wb-tag', text: `${n}곳` }) : null, originTag(a), el('span', { className: 'wb-sample', text: sampleText(a) }))
       );
     } else {
-      const ambiguous = (st.autoCandidates[b] || []).filter((x) => x !== a);
+      const amb = st.autoCandidates[b];
+      const ambiguous = amb ? amb.list.filter((x) => x !== a) : [];
       let content;
-      if (ambiguous.length > 1) {
-        content = [el('span', { className: 'wb-muted', text: `후보 ${ambiguous.length}개가 비슷함` }), ...ambiguous.slice(0, 3).map((x) => candidateChip(x, '자동 연결 후보'))];
+      if (ambiguous.length > 0) {
+        // 왜 자동으로 연결하지 않았는지(같은 이름이 둘, 다른 타겟 컬럼과 같은 후보 등)를 후보와 함께 보인다
+        const note = amb.note || `후보 ${ambiguous.length}개가 비슷함`;
+        content = [el('span', { className: 'wb-muted wb-amb-note', text: note }), ...ambiguous.slice(0, 3).map((x) => candidateChip(x, `자동 연결 후보 · ${note}`))];
       } else {
         const recs = recommendFor(b, 2, used);
         content = recs.length

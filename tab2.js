@@ -27,7 +27,7 @@ const {
   refreshSheetSelector,
   readSheetTable,
   describeRecognition,
-  findAutoMatch,
+  autoMatchAll,
   xmlEscape,
   formatPreviewValue: formatMailMergeValue,
 } = common;
@@ -390,7 +390,7 @@ function renderVarForm() {
  * 메일머지 일괄 생성 (데이터 파일의 각 행마다 문서 하나씩 생성)
  * 엑셀/CSV 읽기·시트 선택·헤더 행 자동 감지·편집거리 기반 컬럼 자동 매핑은
  * 공통 모듈(common.js)의 readSheetTable/refreshSheetSelector/
- * findAutoMatch를 그대로 재사용한다 (탭1의 컬럼 매핑과 동일한 로직).
+ * autoMatchAll을 그대로 재사용한다 (탭1의 컬럼 매핑과 동일한 로직).
  * ------------------------------------------------------------------------- */
 
 const dropMailMergeData = document.getElementById('dropMailMergeData');
@@ -492,7 +492,7 @@ function buildMailMergeColumnPreview(column) {
 }
 
 /**
- * 템플릿 변수 ← 데이터 컬럼 매핑 테이블을 그린다 (공통 findAutoMatch로 자동 매핑 제안).
+ * 템플릿 변수 ← 데이터 컬럼 매핑 테이블을 그린다 (공통 autoMatchAll로 자동 매핑 제안).
  * 매핑된 데이터 컬럼의 실제 값(앞 2행)을 미리보기로 함께 보여줘, 자동/수동 매핑이
  * 맞는지 일괄 생성을 누르기 전에 바로 확인할 수 있게 한다 (CSV/엑셀 임포트 도구들의
  * "Match Columns" 단계에서 흔히 쓰이는 패턴).
@@ -507,7 +507,8 @@ function renderMailMergeMappingTable() {
     return;
   }
 
-  const usedColumns = new Set();
+  // 변수 순서와 상관없이 같은 이름을 먼저 확정한다(탭1과 같은 규칙)
+  const autoResults = autoMatchAll(templateVars, mmDataHeaders);
   templateVars.forEach((varName) => {
     const tr = document.createElement('tr');
 
@@ -534,11 +535,10 @@ function renderMailMergeMappingTable() {
     const tdPreview = document.createElement('td');
     tdPreview.className = 'mapping-preview-cell';
 
-    const { match: autoMatch, reason } = findAutoMatch(varName, mmDataHeaders, usedColumns);
+    const { match: autoMatch, reason } = autoResults[varName];
     if (autoMatch) {
       select.value = autoMatch;
       mmColumnMapping[varName] = autoMatch;
-      usedColumns.add(autoMatch);
       if (reason === 'synonym') {
         log(`변수 "${varName}"을 동의어 사전에 따라 데이터 컬럼 "${autoMatch}"에 자동 매핑했습니다.`);
       } else if (reason === 'fuzzy') {

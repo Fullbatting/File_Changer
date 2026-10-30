@@ -28,7 +28,7 @@ const {
   readSheetTable,
   readWorkbookSmart,
   getSynonymGroups,
-  findAutoMatch,
+  autoMatchAll,
   detectValueKind,
   xmlEscape,
   formatPreviewValue,
@@ -56,7 +56,7 @@ let headersB = []; // 컬럼키 (같은 이름이 둘이면 "비고_1"처럼 구
 let labelsB = []; // 결과 파일 헤더에 쓸 원래 컬럼 이름
 let mapping = {}; // { B키: A키 | '' }
 let matchReason = {}; // { B키: 'exact'|'synonym'|'fuzzy'|'confirmed'|'manual'|'preset'|'rule'|'none' }
-let autoCandidates = {}; // { B키: [A키] } 자동 매핑이 모호해서 멈춘 후보
+let autoCandidates = {}; // { B키: { list: [A키], note } } 자동 매핑이 모호해서 멈춘 후보와 그 이유
 let requiredColumns = new Set(); // 저장 전 검증에서 "필수"로 지정된 B 컬럼
 let overrides = new Map(); // "원본행인덱스|B키" -> 사용자가 미리보기에서 고친 글자
 let history = { undo: [], redo: [] };
@@ -1150,18 +1150,20 @@ function prepareSource(table) {
   };
 }
 
-/** 분석 직후 자동 매핑. 동의어/비슷한 이름 연결은 로그로도 알린다 */
+/**
+ * 분석 직후 자동 매핑. 타겟 컬럼 순서와 상관없이 같은 이름을 모두 먼저 확정한 뒤 동의어·비슷한 이름을
+ * 정한다(common.autoMatchAll). 동의어/비슷한 이름 연결과 모호해서 멈춘 컬럼은 로그로도 알린다.
+ */
 function runAutoMapping() {
   mapping = {};
   matchReason = {};
   autoCandidates = {};
-  const usedHeadersA = new Set();
+  const results = autoMatchAll(headersB, headersA);
   headersB.forEach((bCol) => {
-    const { match, reason, candidates } = findAutoMatch(bCol, headersA, usedHeadersA);
+    const { match, reason, candidates, note } = results[bCol];
     if (match) {
       mapping[bCol] = match;
       matchReason[bCol] = reason;
-      usedHeadersA.add(match);
       if (reason === 'synonym') {
         log(`"${bCol}" 컬럼을 동의어 사전에 따라 "${match}" 컬럼에 자동 매핑했습니다.`);
       } else if (reason === 'fuzzy') {
@@ -1170,7 +1172,10 @@ function runAutoMapping() {
     } else {
       mapping[bCol] = '';
       matchReason[bCol] = 'none';
-      if (candidates && candidates.length > 1) autoCandidates[bCol] = candidates;
+      if (candidates && candidates.length > 0) {
+        autoCandidates[bCol] = { list: candidates, note };
+        log(`"${bCol}" 컬럼은 자동 연결하지 않았습니다(${note}: ${candidates.join(', ')}). 직접 고르세요.`, 'warn');
+      }
     }
   });
 }
