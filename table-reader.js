@@ -312,11 +312,27 @@ function legacyHeaderScore(row) {
 
 /**
  * 시트 맨 위 최대 10행에서 헤더 행(0부터)을 고른다. 헤더로 보이는 행 중 가장 위의 것.
- * 그런 행이 없으면(숫자로 된 컬럼 이름 등) 예전 방식대로 가장 많이 채워진 행.
+ * 다만 두 줄 머리글(위: "인적사항 | 연락처" 묶음, 아래: "이름 | 전화번호 | 이메일")이면 아래 줄을 고른다 —
+ * 바로 아래 행도 헤더로 보이고 더 많이 채워져 있으면서, 세로 병합으로 같은 칸에 같은 이름이 있거나
+ * 그 아래 행은 헤더처럼 보이지 않을 때(데이터가 시작됨). 글자로만 된 데이터 행을 헤더로 잘못 내리지 않도록
+ * 아래 행들도 모두 글자뿐이면 위 줄에 머문다(직접 고를 수 있다).
+ * 헤더로 보이는 행이 없으면(숫자로 된 컬럼 이름 등) 예전 방식대로 가장 많이 채워진 행.
  */
 function detectHeaderRowIndex(grid) {
-  const first = headerRowCandidates(grid).find((c) => c.likely);
-  if (first) return first.index;
+  const candidates = headerRowCandidates(grid);
+  let idx = candidates.findIndex((c) => c.likely);
+  if (idx >= 0) {
+    while (idx + 1 < candidates.length) {
+      const next = candidates[idx + 1];
+      if (!next.likely || next.filled <= candidates[idx].filled) break;
+      const sameCell = grid[idx].some((v, c) => !isBlank(v) && formatPreviewValue(v).trim() === formatPreviewValue(grid[idx + 1][c]).trim());
+      const after = candidates[idx + 2];
+      const dataStarts = !!after && after.filled > 0 && !after.likely;
+      if (!sameCell && !dataStarts) break;
+      idx += 1;
+    }
+    return idx;
+  }
   const scanLimit = Math.min(HEADER_SCAN_ROWS, grid.length);
   let bestIndex = 0;
   let bestScore = -Infinity;
@@ -471,7 +487,8 @@ function describeRecognition(report, fileInfo = {}, { includeRows = true } = {})
   });
   if (report.skippedRows.length > 0) {
     const list = report.skippedRows.slice(0, 3).map((r) => `${r.rowNumber}행 "${r.preview}"`).join(', ');
-    items.push({ text: `헤더 위 ${report.skippedRows.length}개 행은 데이터에서 뺌: ${list}${report.skippedRows.length > 3 ? ' …' : ''}`, warn: true });
+    const what = includeRows ? '데이터에서 뺌' : '건너뜀';
+    items.push({ text: `헤더 위 ${report.skippedRows.length}개 행은 ${what}: ${list}${report.skippedRows.length > 3 ? ' …' : ''}`, warn: true });
   }
   if (report.unnamedColumns.length > 0) {
     items.push({ text: `머리글이 빈 열 ${report.unnamedColumns.length}개를 ${report.unnamedColumns.join(', ')}(으)로 넣음(값이 있어 버리지 않음)`, warn: true });

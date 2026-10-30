@@ -60,6 +60,19 @@ test('헤더 판정: 제목 한 줄·작성 정보 줄 아래의 헤더를 고�
   assert.deepStrictEqual(r.rowNumbers, [5]);
 });
 
+test('헤더 판정: 두 줄 머리글이면 아래 줄(세로 병합으로 같은 이름이 있거나 바로 아래부터 데이터)', () => {
+  // 한글 문서 표: 이름·부서는 두 줄로 세로 병합, 연락처는 전화번호·이메일 두 칸 묶음
+  const hwp = t.buildTableFromSheet(sheet([['2026년 하반기 직원 명단', '', '', ''], ['이름', '연락처', '', '부서'], ['이름', '전화번호', '이메일', '부서'], ['홍길동', '010-1111-2222', 'hong@example.com', '영업팀']]), 'S');
+  assert.strictEqual(hwp.headerRowIndex, 2);
+  assert.deepStrictEqual(hwp.headers, ['이름', '전화번호', '이메일', '부서']);
+  // 병합 없이 묶음 이름만 있는 위 줄, 아래는 숫자가 섞인 데이터
+  const group = t.buildTableFromSheet(sheet([['인적사항', '', '급여', ''], ['이름', '부서', '기본급', '수당'], ['홍길동', '영업', 100, 20]]), 'S');
+  assert.strictEqual(group.headerRowIndex, 1);
+  // 글자만 있는 데이터가 이어지면 위 줄(진짜 헤더)에 머문다
+  const textData = t.buildTableFromSheet(sheet([['이름', '부서', ''], ['홍길동', '영업팀', '서울'], ['김영희', '개발팀', '부산']]), 'S');
+  assert.strictEqual(textData.headerRowIndex, 0);
+});
+
 test('헤더 판정: 숫자 컬럼 이름(연도)만 있는 표는 예전 방식(가장 많이 채워진 행)으로', () => {
   const r = t.buildTableFromSheet(sheet([['보고서'], [2024, 2025, 2026], [10, 20, 30]]), 'S');
   assert.strictEqual(r.headerRowIndex, 1);
