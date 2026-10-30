@@ -7,8 +7,9 @@ const fs = require('fs');
 const path = require('path');
 const XLSX = require('xlsx');
 const PizZip = require('pizzip');
-const iconv = require('iconv-lite');
 const { readHwpTables, cellsToRows } = require('./hwp-reader.js');
+const tableReader = require('./table-reader.js');
+const { formatPreviewValue } = tableReader;
 
 /* =========================================================================
    0. 공통 유틸 (로그, 탭 전환)
@@ -85,57 +86,6 @@ function safeWriteFileSync(filePath, data) {
     err.path = err.path || filePath;
     throw err;
   }
-}
-
-/**
- * 버퍼가 유효한 UTF-8 시퀀스로만 구성되어 있는지 검사한다.
- * (한글 CSV가 EUC-KR/CP949(Windows 기본 인코딩)로 저장된 경우를 구분하기 위함)
- */
-function isValidUTF8(buffer) {
-  let i = 0;
-  const len = buffer.length;
-  while (i < len) {
-    const byte = buffer[i];
-    let extraBytes = 0;
-
-    if (byte <= 0x7f) {
-      extraBytes = 0;
-    } else if ((byte & 0xe0) === 0xc0) {
-      extraBytes = 1;
-    } else if ((byte & 0xf0) === 0xe0) {
-      extraBytes = 2;
-    } else if ((byte & 0xf8) === 0xf0) {
-      extraBytes = 3;
-    } else {
-      return false;
-    }
-
-    if (i + extraBytes >= len) return false;
-
-    for (let j = 1; j <= extraBytes; j++) {
-      if ((buffer[i + j] & 0xc0) !== 0x80) return false;
-    }
-
-    i += extraBytes + 1;
-  }
-  return true;
-}
-
-/**
- * CSV 파일을 인코딩을 자동 판별하여 문자열로 디코딩한다.
- * - UTF-8 BOM: BOM 제거 후 UTF-8로 디코딩
- * - 유효한 UTF-8: 그대로 UTF-8로 디코딩
- * - 그 외(대부분 Windows 한글 Excel의 기본 저장 인코딩): CP949(EUC-KR 상위 호환)로 디코딩
- */
-function decodeCsvBuffer(buffer) {
-  const hasBOM = buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf;
-  if (hasBOM) {
-    return buffer.slice(3).toString('utf-8');
-  }
-  if (isValidUTF8(buffer)) {
-    return buffer.toString('utf-8');
-  }
-  return iconv.decode(buffer, 'cp949');
 }
 
 /** 파일의 현재 수정 시각(ms). 캐시 무효화 판단용. 파일이 없으면 null. */
@@ -371,39 +321,52 @@ const WORKBOOK_CACHE_LIMIT = 8;
 
 /**
  * 파일 경로로부터 워크북을 읽는다.
- * - .csv: 인코딩 자동 판별 후 문자열로 파싱 (한글 CP949 CSV 대응)
  * - .hwpx/.hwpt/.hwp: 한글 문서 안의 표 하나하나를 시트 하나로 변환 (.hwp는 hwp-reader.js)
- * - .xlsx/.xls: XLSX.readFile 사용
+ * - 그 밖에는 확장자가 아니라 파일 앞부분(내용)으로 판단: 글자 파일(CSV)은 인코딩을 자동 판별
+ *   (또는 encoding으로 직접 지정)해 문자열로, 그 외(xlsx·xls·HTML 표)는 SheetJS로 읽는다.
+ * 결과 워크북의 fileInfo에 내용 형식·인코딩·확장자와 다른지·1904 날짜 체계 여부를 담는다.
  */
-function readWorkbookSmart(filePath) {
+function readWorkbookSmart(filePath, { encoding = 'auto' } = {}) {
   const mtimeMs = getFileMtimeMs(filePath);
-  const cached = workbookCache.get(filePath);
+  const cacheKey = `${filePath}|${encoding}`;
+  const cached = workbookCache.get(cacheKey);
   if (cached && cached.mtimeMs === mtimeMs) {
     return cached.workbook;
   }
 
   const ext = path.extname(filePath).toLowerCase();
   let workbook;
+  // fileInfo: 인식 결과 화면에 보일 파일 정보(실제 내용 형식, 글자 인코딩, 확장자와 다른지)
+  const fileInfo = { ext, contentKind: null, mismatch: '', encoding: null, encodingAuto: true, brokenChars: 0, textSource: false };
   if (ext === '.hwp') {
     workbook = buildWorkbookFromTables(readHwpTables(safeReadFileSync(filePath)));
+    fileInfo.textSource = true;
   } else if (ext === '.hwpx' || ext === '.hwpt') {
     workbook = buildWorkbookFromTables(readHwpxTables(filePath));
-  } else if (ext === '.csv') {
-    const buffer = safeReadFileSync(filePath);
-    const text = decodeCsvBuffer(buffer);
-    // raw:true — CSV 글자를 숫자/날짜로 추측 변환하지 않는다. 변환하면 전화번호
-    // "01012345678"·우편번호 "03187"의 앞자리 0이 사라지고 "2026-01-15"가 날짜
-    // 일련번호(46037)로 바뀐다.
-    workbook = XLSX.read(text, { type: 'string', raw: true });
+    fileInfo.textSource = true;
   } else {
     const buffer = safeReadFileSync(filePath);
-    // 날짜는 cellDates 대신 readCellValue에서 직접 푼다(이유는 그 함수 설명 참고). cellNF는 셀의
-    // 표시 형식(z)을 남겨 날짜 셀·앞자리 0 채움 셀을 알아보기 위해 필요하다.
-    workbook = XLSX.read(buffer, { type: 'buffer', cellNF: true });
+    // 확장자가 아니라 실제 내용으로 읽는 방법을 정한다(CSV를 .xlsx로 이름만 바꾼 파일 등)
+    fileInfo.contentKind = tableReader.sniffContentKind(buffer);
+    fileInfo.mismatch = tableReader.describeContentMismatch(ext, fileInfo.contentKind);
+    if (fileInfo.contentKind === 'text') {
+      const decoded = tableReader.decodeTextBuffer(buffer, encoding);
+      Object.assign(fileInfo, { encoding: decoded.encoding, encodingAuto: decoded.auto, brokenChars: decoded.brokenChars, textSource: true });
+      // raw:true — CSV 글자를 숫자/날짜로 추측 변환하지 않는다. 변환하면 전화번호
+      // '01012345678'·우편번호 '03187'의 앞자리 0이 사라지고 '2026-01-15'가 날짜
+      // 일련번호(46037)로 바뀐다. 날짜·숫자 글자는 탭1에서 열 단위로 확인해 바꾼다.
+      workbook = XLSX.read(decoded.text, { type: 'string', raw: true });
+    } else {
+      // 날짜는 cellDates 대신 readCellValue에서 직접 푼다(이유는 그 함수 설명 참고). cellNF는 셀의
+      // 표시 형식(z)을 남겨 날짜 셀·앞자리 0 채움 셀을 알아보기 위해 필요하다.
+      workbook = XLSX.read(buffer, { type: 'buffer', cellNF: true });
+    }
   }
+  fileInfo.date1904 = tableReader.isDate1904(workbook);
+  workbook.fileInfo = fileInfo;
 
   evictOldestIfFull(workbookCache, WORKBOOK_CACHE_LIMIT);
-  workbookCache.set(filePath, { mtimeMs, workbook });
+  workbookCache.set(cacheKey, { mtimeMs, workbook });
   return workbook;
 }
 
@@ -498,7 +461,7 @@ function bindDropzone(zoneEl, fileNameEl, filters, onFileSelected) {
  * 파일 선택 직후의 최초 시트 반영은 onChange로, 사용자가 드롭다운에서 직접
  * 시트를 바꿀 때의 후속 처리(상태 초기화 등)는 onUserChangedSheet으로 분리
  * 되어 있다. 탭1(A/B 파일)과 탭2(메일머지 데이터 파일)가 이 함수를 공유하므로,
- * "시트를 바꾸면 무엇을 초기화할지"는 호출하는 쪽의 책임으로 둬야 한다 —
+ * '시트를 바꾸면 무엇을 초기화할지'는 호출하는 쪽의 책임으로 둬야 한다 —
  * 그렇지 않으면 탭2에서 시트를 바꿨는데 탭1의 매핑/프리셋이 초기화되는 식의
  * 엉뚱한 부작용이 생긴다.
  */
@@ -514,7 +477,7 @@ function refreshSheetSelector(filePath, sheetRowEl, sheetSelectEl, onChange, onU
       sheetSelectEl.appendChild(opt);
     });
 
-    // 한글 문서는 시트 대신 "표"를 고르므로 안내 문구도 그에 맞춘다
+    // 한글 문서는 시트 대신 '표'를 고르므로 안내 문구도 그에 맞춘다
     const unit = workbook.sheetUnitLabel || '시트';
     const labelEl = sheetRowEl.querySelector('label');
     if (labelEl) labelEl.textContent = `${unit} 선택`;
@@ -541,177 +504,32 @@ function refreshSheetSelector(filePath, sheetRowEl, sheetSelectEl, onChange, onU
 }
 
 /**
- * 행(배열) 하나가 "헤더(컬럼명) 행"일 가능성이 얼마나 되는지 점수로 매긴다.
- * - 완전히 빈 행: 후보 아님(-1)
- * - 여러 칸짜리 표인데 딱 한 칸만 채워진 행: "2026년 명단"류 제목 행일 가능성이
- *   높으므로 낮은 점수(0)
- * - 그 외에는 채워진 칸 수가 많을수록 높은 점수. 평균 글자 수가 아주 길면
- *   (문장형 텍스트) 헤더보다는 본문/설명일 가능성이 있어 약하게 감점.
+ * 시트에서 헤더 행을 찾고(또는 직접 고른 행을 쓰고) 그 아래 행들을 { 컬럼키: 값 } 객체로 읽는다.
+ * 자세한 규칙은 table-reader.js의 buildTableFromSheet. 반환값의 report에 인식 결과(헤더 행,
+ * 건너뛴 행, 이름 없는 열, 인코딩, 확장자와 다른 내용)가 들어 있다.
+ * options: { displayText, headerRowIndex(0부터 · null이면 자동), encoding('auto'|'utf-8'|'cp949') }
  */
-function scoreHeaderRowCandidate(row) {
-  const nonEmpty = row.filter((c) => String(c).trim() !== '');
-  if (nonEmpty.length === 0) return -1;
-  if (nonEmpty.length === 1 && row.length > 1) return 0;
-  const avgLen = nonEmpty.reduce((sum, c) => sum + String(c).trim().length, 0) / nonEmpty.length;
-  return avgLen > 20 ? nonEmpty.length * 0.5 : nonEmpty.length;
-}
-
-/**
- * 시트 상단 최대 10행을 살펴보고 실제 헤더 행으로 보이는 행의 인덱스(0-based,
- * 시트의 실제 행 번호와 일치)를 추정한다. "2026년 하반기 명단"처럼 제목 행이
- * 1행에 있어 헤더가 그 아래에 있는 경우를 걸러내기 위함. 점수가 동일하면 더
- * 앞쪽 행(기존 동작인 1행)을 우선하므로, 평범한 파일에서는 항상 1행이 그대로
- * 선택된다.
- */
-function detectHeaderRowIndex(rawRows) {
-  const scanLimit = Math.min(10, rawRows.length);
-  let bestIndex = 0;
-  let bestScore = -Infinity;
-  for (let i = 0; i < scanLimit; i++) {
-    const score = scoreHeaderRowCandidate(rawRows[i]);
-    if (score > bestScore) {
-      bestScore = score;
-      bestIndex = i;
-    }
-  }
-  return bestIndex;
-}
-
-/**
- * 셀 하나의 값을 읽는다.
- * - 날짜 셀은 SheetJS의 Date 자동 변환(cellDates) 대신 일련번호를 연/월/일/시/분/초로
- *   직접 풀어 "현지 시각"의 Date로 만든다. cellDates는 1899년 기준 시각을 현지
- *   시간대로 계산하는데, 서울처럼 그 무렵 표준시(LMT)가 지금과 달랐던 지역에서는
- *   몇십 초가 어긋나 날짜가 전날로 읽힌다(2026-01-15 → 2026-01-14 23:59:08).
- *   시각만 있는 셀(일련번호 1 미만)은 "HH:MM" 글자로 돌려준다.
- * - "00000"처럼 앞자리 0을 채워 보이게 한 숫자 셀(우편번호 등)은 보이는 글자 그대로.
- * - displayText면 숫자도 엑셀 화면에 보이는 글자(천 단위 구분·%·통화 기호) 그대로 —
- *   메일머지 문서에는 0.15가 아니라 "15%"가 들어가야 하기 때문이다.
- */
-function readCellValue(cell, displayText) {
-  if (!cell || cell.v === undefined || cell.v === null) return '';
-  if (cell.t === 'e') return cell.w || '';
-  if (cell.t === 'd' && cell.v instanceof Date) return cell.v;
-  if (cell.t === 'n') {
-    const format = typeof cell.z === 'string' ? cell.z : '';
-    if (format && XLSX.SSF.is_date(format)) {
-      const p = XLSX.SSF.parse_date_code(cell.v);
-      if (p) {
-        const pad = (n) => String(n).padStart(2, '0');
-        if (cell.v < 1) return `${pad(p.H)}:${pad(p.M)}${p.S ? `:${pad(p.S)}` : ''}`;
-        return new Date(p.y, p.m - 1, p.d, p.H, p.M, p.S);
-      }
-    }
-    if (cell.w !== undefined && (displayText || /^0+$/.test(format))) return cell.w;
-  }
-  return cell.v;
-}
-
-/**
- * 시트를 2차원 배열로 읽는다. 행/열 번호는 시트의 사용 범위(!ref) 시작점 기준이다 —
- * 표가 A1이 아니라 B2 같은 곳에서 시작해도 헤더 찾기와 데이터 읽기가 같은 배열을
- * 쓰므로 어긋나지 않는다. 서식만 남은 먼 빈 칸 때문에 범위가 쓸데없이 커지지 않도록
- * 실제 값이 있는 마지막 행/열까지만 읽는다. 세로 병합 셀은 한글 문서 표와 같은 규칙
- * (cellsToRows 설명 참고)으로 아래 칸까지 값을 채운다.
- */
-function sheetToGrid(sheet, displayText) {
-  if (!sheet || !sheet['!ref']) return [];
-  const start = XLSX.utils.decode_range(sheet['!ref']).s;
-  let lastRow = start.r - 1;
-  let lastCol = start.c - 1;
-  Object.keys(sheet).forEach((key) => {
-    if (key[0] === '!') return;
-    const v = sheet[key] && sheet[key].v;
-    if (v === undefined || v === null || v === '') return;
-    const addr = XLSX.utils.decode_cell(key);
-    if (addr.r > lastRow) lastRow = addr.r;
-    if (addr.c > lastCol) lastCol = addr.c;
-  });
-
-  const grid = [];
-  for (let r = start.r; r <= lastRow; r++) {
-    const row = [];
-    for (let c = start.c; c <= lastCol; c++) row.push(readCellValue(sheet[XLSX.utils.encode_cell({ r, c })], displayText));
-    grid.push(row);
-  }
-
-  (sheet['!merges'] || []).forEach(({ s, e }) => {
-    const col = s.c - start.c;
-    const top = grid[s.r - start.r];
-    if (!top || col < 0 || col >= top.length) return;
-    for (let r = s.r + 1; r <= e.r; r++) {
-      const row = grid[r - start.r];
-      if (row) row[col] = top[col];
-    }
-  });
-  return grid;
-}
-
-/**
- * 시트에서 헤더 행을 자동으로 찾고, 그 아래 행들을 { 컬럼키: 값 } 객체로 읽는다.
- * 헤더와 데이터를 같은 2차원 배열(sheetToGrid)에서 열 번호로 짝지으므로, 헤더 칸의
- * 앞뒤 공백("이름 ")이나 같은 이름의 컬럼이 둘 있어도 값이 엉뚱한 컬럼으로 가지 않는다.
- * - headers: 컬럼키. 같은 이름이 또 나오면 "비고_1", "비고_2"처럼 구분한다.
- * - labels: 화면/결과 파일에 보일 원래 이름(공백만 정리).
- * - rows: 매핑된 컬럼 값이 모두 빈 행은 뺀다.
- */
-function readSheetTable(filePath, sheetName, { displayText = false } = {}) {
-  const workbook = readWorkbookSmart(filePath);
+function readSheetTable(filePath, sheetName, { displayText = false, headerRowIndex = null, encoding = 'auto' } = {}) {
+  const workbook = readWorkbookSmart(filePath, { encoding });
   const targetSheetName = sheetName || workbook.SheetNames[0];
   if (!targetSheetName || !workbook.Sheets[targetSheetName]) {
     throw new Error(`시트를 찾을 수 없습니다${sheetName ? ` (${sheetName})` : ''}.`);
   }
-  const grid = sheetToGrid(workbook.Sheets[targetSheetName], displayText);
-  if (grid.length === 0) throw new Error(`"${targetSheetName}" 시트에 데이터가 비어 있습니다.`);
-
-  const headerRowIndex = detectHeaderRowIndex(grid);
-  const columns = [];
-  const usedKeys = new Set();
-  grid[headerRowIndex].forEach((cell, index) => {
-    const label = formatPreviewValue(cell).replace(/\s+/g, ' ').trim();
-    if (!label) return;
-    let key = label;
-    for (let n = 1; usedKeys.has(key); n++) key = `${label}_${n}`;
-    usedKeys.add(key);
-    columns.push({ key, label, index });
+  const fileInfo = workbook.fileInfo || {};
+  const table = tableReader.buildTableFromSheet(workbook.Sheets[targetSheetName], targetSheetName, {
+    displayText,
+    date1904: !!fileInfo.date1904,
+    headerRowIndex,
   });
-  if (columns.length === 0) throw new Error(`"${targetSheetName}" 시트에서 헤더(컬럼명) 행을 찾을 수 없습니다.`);
-
-  // rowNumbers[i]: rows[i]가 원본에서 몇 번째 행이었는지(1부터). 엑셀·CSV는 시트의 실제 행 번호,
-  // 한글 문서 표는 표 안의 행 번호다. 빈 행을 걸러낸 뒤에도 맞도록 거르기 전에 함께 기록한다.
-  const sheet = workbook.Sheets[targetSheetName];
-  const start = XLSX.utils.decode_range(sheet['!ref']).s;
-  const rows = [];
-  const rowNumbers = [];
-  grid.slice(headerRowIndex + 1).forEach((r, i) => {
-    const obj = {};
-    columns.forEach(({ key, index }) => {
-      obj[key] = r[index] === undefined ? '' : r[index];
-    });
-    if (!Object.values(obj).some((v) => v !== '')) return;
-    rows.push(obj);
-    rowNumbers.push(start.r + headerRowIndex + 1 + i + 1);
-  });
-
-  // 컬럼별 원본 숫자 표시 형식(%, 통화, 천 단위 등). 변환 결과 엑셀에서 0.15가 "15%"로 보이도록 넘겨준다.
-  const numberFormats = {};
-  columns.forEach(({ key, index }) => {
-    for (let r = headerRowIndex + 1; r < grid.length; r++) {
-      const cell = sheet[XLSX.utils.encode_cell({ r: start.r + r, c: start.c + index })];
-      if (cell && cell.t === 'n' && typeof cell.z === 'string' && cell.z !== 'General' && !XLSX.SSF.is_date(cell.z)) {
-        numberFormats[key] = cell.z;
-        break;
-      }
-    }
-  });
-
-  return { headers: columns.map((c) => c.key), labels: columns.map((c) => c.label), headerRowIndex, rows, rowNumbers, numberFormats };
+  table.fileInfo = fileInfo;
+  table.textSource = !!fileInfo.textSource;
+  return table;
 }
 
-/** 헤더 정보만 필요할 때: { headers, labels, headerRowIndex } */
-function extractHeaders(filePath, sheetName) {
-  const { headers, labels, headerRowIndex } = readSheetTable(filePath, sheetName);
-  return { headers, labels, headerRowIndex };
+/** 헤더 정보만 필요할 때: { headers, labels, headerRowIndex, report, fileInfo } */
+function extractHeaders(filePath, sheetName, options) {
+  const { headers, labels, headerRowIndex, report, fileInfo } = readSheetTable(filePath, sheetName, options);
+  return { headers, labels, headerRowIndex, report, fileInfo };
 }
 
 /** 두 문자열 간 편집거리(Levenshtein distance)를 계산 */
@@ -983,23 +801,6 @@ function rankSourceCandidates(bName, headersA, valueKindByA = {}) {
     .map(({ a, score, reasons }) => ({ a, score, reasons }));
 }
 
-/**
- * 값을 화면 표시용 문자열로 안전하게 바꾼다. 엑셀 날짜 셀은 readWorkbookSmart가
- * cellDates:true로 읽어 JS Date 객체가 되는데, 그냥 String()으로 바꾸면
- * "Thu Jan 01 2026 00:00:00 GMT+0900..." 같은 장문이 되어버리므로, 시/분/초가
- * 전부 0인(순수 날짜) 값은 "YYYY-MM-DD"로, 그 외에는 "YYYY-MM-DD HH:MM:SS"로
- * 표기한다. 탭1의 컬럼 매핑 미리보기와 탭2의 메일머지 변수 치환이 함께 쓴다.
- */
-function formatPreviewValue(val) {
-  if (val === '' || val === null || val === undefined) return '';
-  if (val instanceof Date) {
-    const pad = (n) => String(n).padStart(2, '0');
-    const datePart = `${val.getFullYear()}-${pad(val.getMonth() + 1)}-${pad(val.getDate())}`;
-    const hasTime = val.getHours() !== 0 || val.getMinutes() !== 0 || val.getSeconds() !== 0;
-    return hasTime ? `${datePart} ${pad(val.getHours())}:${pad(val.getMinutes())}:${pad(val.getSeconds())}` : datePart;
-  }
-  return String(val);
-}
 
 /** XML 텍스트 노드에 안전하게 삽입할 수 있도록 특수문자를 이스케이프 */
 function xmlEscape(str) {
@@ -1177,6 +978,8 @@ module.exports = {
   refreshSheetSelector,
   extractHeaders,
   readSheetTable,
+  describeRecognition: tableReader.describeRecognition,
+  ENCODING_LABELS: tableReader.ENCODING_LABELS,
   normalizeFieldName,
   levenshteinDistance,
   decomposeHangulToJamo,

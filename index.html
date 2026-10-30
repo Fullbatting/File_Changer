@@ -34,6 +34,17 @@
               <label for="sheetSelectA">시트 선택</label>
               <select id="sheetSelectA"></select>
             </div>
+            <div id="readRowA" class="sheet-row read-row" hidden>
+              <label for="headerSelectA">헤더 행</label>
+              <select id="headerSelectA"></select>
+              <label for="encodingSelectA" class="encoding-label" hidden>인코딩</label>
+              <select id="encodingSelectA" hidden>
+                <option value="auto">자동</option>
+                <option value="utf-8">UTF-8</option>
+                <option value="cp949">CP949(한글 윈도우)</option>
+              </select>
+            </div>
+            <ul id="recogA" class="recog-list" aria-label="원본(A) 인식 결과" hidden></ul>
           </div>
           <div id="dropB" class="dropzone" data-target="B">
             <div class="dz-title">🎯 타겟 양식 파일 (B)</div>
@@ -43,6 +54,17 @@
               <label for="sheetSelectB">시트 선택</label>
               <select id="sheetSelectB"></select>
             </div>
+            <div id="readRowB" class="sheet-row read-row" hidden>
+              <label for="headerSelectB">헤더 행</label>
+              <select id="headerSelectB"></select>
+              <label for="encodingSelectB" class="encoding-label" hidden>인코딩</label>
+              <select id="encodingSelectB" hidden>
+                <option value="auto">자동</option>
+                <option value="utf-8">UTF-8</option>
+                <option value="cp949">CP949(한글 윈도우)</option>
+              </select>
+            </div>
+            <ul id="recogB" class="recog-list" aria-label="타겟(B) 인식 결과" hidden></ul>
           </div>
         </div>
 

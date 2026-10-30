@@ -24,7 +24,7 @@ const {
   JSON_FILTERS,
   bindDropzone,
   refreshSheetSelector,
-  extractHeaders,
+  describeRecognition,
   readSheetTable,
   readWorkbookSmart,
   getSynonymGroups,
@@ -40,6 +40,8 @@ let fileAPath = null;
 let fileBPath = null;
 let sheetAName = null;
 let sheetBName = null;
+// 파일별 읽기 설정: 헤더 행(0부터, null이면 자동)과 글자 인코딩(CSV). 파일·시트를 바꾸면 자동으로 돌아간다
+const readOptions = { A: { headerRowIndex: null, encoding: 'auto' }, B: { headerRowIndex: null, encoding: 'auto' } };
 
 /* -------------------------------------------------------------------------
  * 상태 모델 (탭1의 유일한 진실 원천)
@@ -278,7 +280,7 @@ function isTextSource(filePath) {
 }
 
 function normalizeTextSource(table, filePath, label) {
-  if (!isTextSource(filePath)) return;
+  if (!(table.textSource || isTextSource(filePath))) return;
   const dateColumns = convertTextDateColumns(table);
   convertTextNumberColumns(table);
   if (dateColumns.length > 0 && label) log(`${label}의 날짜 글자 컬럼을 날짜로 읽었습니다: ${dateColumns.join(', ')}`);
@@ -708,8 +710,8 @@ function confirmDiscardOverrides(title) {
   });
 }
 
-// 시트 선택 <select> 클릭이 드롭존의 파일선택 클릭으로 전파되지 않도록 차단
-[sheetRowA, sheetRowB].forEach((row) => {
+// 시트·헤더 행 선택 <select>와 인식 결과 클릭이 드롭존의 파일선택 클릭으로 전파되지 않도록 차단
+[sheetRowA, sheetRowB, ...['A', 'B'].flatMap((w) => [document.getElementById(`readRow${w}`), document.getElementById(`recog${w}`)])].forEach((row) => {
   row.addEventListener('click', (e) => e.stopPropagation());
 });
 
@@ -753,7 +755,9 @@ async function onTab1SheetChanged(which, name) {
     return;
   }
   select.dataset.committed = name;
+  readOptions[which].headerRowIndex = null;
   resetAnalysisState();
+  renderRecognition(which);
   if (which === 'A') refreshExtraSources({ resetKeys: true });
   log(`시트가 "${name}"(으)로 변경되었습니다. [구조 분석]을 다시 실행하세요.`, 'warn');
 }
@@ -768,6 +772,7 @@ function bindTab1File(which, dropEl, fileNameEl, sheetRowEl, sheetSelectEl) {
     }
     if (which === 'A') fileAPath = p;
     else fileBPath = p;
+    readOptions[which] = { headerRowIndex: null, encoding: 'auto' };
     log(`${which === 'A' ? '원본(A)' : '타겟(B)'} 파일 선택됨: ${p}`);
     resetAnalysisState();
     refreshSheetSelector(
@@ -781,9 +786,93 @@ function bindTab1File(which, dropEl, fileNameEl, sheetRowEl, sheetSelectEl) {
       (name) => onTab1SheetChanged(which, name)
     );
     sheetSelectEl.dataset.committed = sheetSelectEl.value;
+    renderRecognition(which);
     if (which === 'A') refreshExtraSources({ resetKeys: true });
   });
 }
+
+/** 원본(A)·타겟(B)을 지금 읽기 설정(시트·헤더 행·인코딩)으로 읽는다 */
+function readTableFor(which, options = {}) {
+  const filePath = which === 'A' ? fileAPath : fileBPath;
+  const sheetName = which === 'A' ? sheetAName : sheetBName;
+  return readSheetTable(filePath, sheetName, { ...readOptions[which], ...options });
+}
+
+/**
+ * ① 인식 결과: 헤더로 고른 행, 건너뛴 위쪽 행, 이름 없는 열, 인코딩, 확장자와 다른 내용을 보여 주고
+ * 헤더 행(맨 위 10행 중)과 CSV 인코딩을 직접 고를 수 있게 한다.
+ */
+function renderRecognition(which) {
+  const readRow = document.getElementById(`readRow${which}`);
+  const list = document.getElementById(`recog${which}`);
+  const headerSelect = document.getElementById(`headerSelect${which}`);
+  const encodingSelect = document.getElementById(`encodingSelect${which}`);
+  const encodingLabel = readRow.querySelector('.encoding-label');
+  const filePath = which === 'A' ? fileAPath : fileBPath;
+  list.innerHTML = '';
+  if (!filePath) {
+    readRow.hidden = true;
+    list.hidden = true;
+    return;
+  }
+  const addItem = ({ text, warn }) => {
+    const li = document.createElement('li');
+    li.textContent = text;
+    if (warn) li.className = 'warn';
+    list.appendChild(li);
+  };
+  let table;
+  try {
+    table = readTableFor(which);
+  } catch (err) {
+    readRow.hidden = true;
+    list.hidden = false;
+    addItem({ text: `읽지 못했습니다: ${friendlyErrorMessage(err)}`, warn: true });
+    return;
+  }
+  const { report, fileInfo } = table;
+  headerSelect.innerHTML = '';
+  headerSelect.appendChild(new Option(`자동 (${report.autoHeaderRowNumber}행)`, ''));
+  report.headerCandidates.forEach((c) => {
+    if (c.filled === 0) return;
+    const opt = new Option(`${c.rowNumber}행: ${c.preview}`, String(c.index));
+    headerSelect.appendChild(opt);
+  });
+  headerSelect.value = readOptions[which].headerRowIndex === null ? '' : String(readOptions[which].headerRowIndex);
+  const isText = !!fileInfo.encoding;
+  encodingSelect.hidden = !isText;
+  encodingLabel.hidden = !isText;
+  encodingSelect.value = readOptions[which].encoding;
+  readRow.hidden = false;
+  list.hidden = false;
+  describeRecognition(report, fileInfo, { includeRows: which === 'A' }).forEach(addItem);
+}
+
+/** 헤더 행·인코딩을 바꾸면 분석 결과와 어긋나므로(고친 값이 있으면 확인 후) 초기화한다 */
+async function changeReadOption(which, key, value) {
+  if (readOptions[which][key] === value) return;
+  if (!(await confirmDiscardOverrides(key === 'encoding' ? '인코딩을 바꿀까요?' : '헤더 행을 바꿀까요?'))) {
+    renderRecognition(which);
+    return;
+  }
+  readOptions[which][key] = value;
+  if (key === 'encoding') readOptions[which].headerRowIndex = null;
+  const hadAnalysis = !!source;
+  resetAnalysisState();
+  renderRecognition(which);
+  if (which === 'A') refreshExtraSources({ resetKeys: true });
+  const label = which === 'A' ? '원본(A)' : '타겟(B)';
+  log(`${label} 읽기 설정을 바꿨습니다(${key === 'encoding' ? `인코딩: ${value}` : value === null ? '헤더 행: 자동' : `헤더 행: ${value + 1}번째 행`}).${hadAnalysis ? ' [구조 분석]을 다시 실행하세요.' : ''}`, hadAnalysis ? 'warn' : 'info');
+}
+
+['A', 'B'].forEach((which) => {
+  document.getElementById(`headerSelect${which}`).addEventListener('change', (e) => {
+    changeReadOption(which, 'headerRowIndex', e.target.value === '' ? null : Number(e.target.value));
+  });
+  document.getElementById(`encodingSelect${which}`).addEventListener('change', (e) => {
+    changeReadOption(which, 'encoding', e.target.value);
+  });
+});
 
 bindTab1File('A', dropA, fileNameA, sheetRowA, sheetSelectA);
 bindTab1File('B', dropB, fileNameB, sheetRowB, sheetSelectB);
@@ -811,7 +900,7 @@ function makeSourceLabel(filePath) {
 function readMainTableForMerge() {
   if (!fileAPath) return null;
   try {
-    const table = readSheetTable(fileAPath, sheetAName);
+    const table = readTableFor('A');
     normalizeTextSource(table, fileAPath);
     return table;
   } catch (err) {
@@ -826,6 +915,7 @@ function loadExtraSource(es, mainTable, { resetKeys = false } = {}) {
     const table = readSheetTable(es.path, es.sheetName);
     normalizeTextSource(table, es.path);
     es.headers = table.headers;
+    es.recognition = describeRecognition(table.report, table.fileInfo).filter((item) => item.warn);
     if (mainTable) {
       es.suggestions = mergeSources.suggestJoinKeys(mainTable, table, { synonymGroups: getSynonymGroups() });
       const keysValid = es.keyMain && mainTable.headers.includes(es.keyMain) && es.headers.includes(es.keyOther);
@@ -951,6 +1041,12 @@ function renderExtraSources() {
       hint.classList.add('warn');
     }
     item.appendChild(hint);
+    (es.recognition || []).forEach(({ text }) => {
+      const note = document.createElement('div');
+      note.className = 'extra-source-hint warn';
+      note.textContent = `⚠ ${text}`;
+      item.appendChild(note);
+    });
     extraSourceList.appendChild(item);
   });
 }
@@ -1086,15 +1182,19 @@ document.getElementById('btnAnalyze').addEventListener('click', async () => {
     }
     if (source && !(await confirmDiscardOverrides('다시 분석할까요?'))) return;
     log(`구조 분석을 시작합니다... (A 시트: ${sheetAName || '첫 번째 시트'}, B 시트: ${sheetBName || '첫 번째 시트'})`);
-    const resultA = readSheetTable(fileAPath, sheetAName);
+    const resultA = readTableFor('A');
     normalizeTextSource(resultA, fileAPath, '원본(A)');
-    const resultB = extractHeaders(fileBPath, sheetBName);
+    const resultB = readTableFor('B');
     [
-      ['원본(A)', resultA.headerRowIndex],
-      ['타겟(B)', resultB.headerRowIndex],
-    ].forEach(([label, idx]) => {
-      if (idx > 0) log(`${label} 파일: 제목/빈 행으로 보이는 ${idx}개 행을 건너뛰고 ${idx + 1}번째 행을 헤더로 인식했습니다.`, 'warn');
+      ['원본(A)', resultA, true],
+      ['타겟(B)', resultB, false],
+    ].forEach(([label, t, includeRows]) => {
+      describeRecognition(t.report, t.fileInfo, { includeRows })
+        .filter((item) => item.warn)
+        .forEach((item) => log(`${label} 파일: ${item.text}`, 'warn'));
     });
+    renderRecognition('A');
+    renderRecognition('B');
     [
       ['원본(A)', resultA],
       ['타겟(B)', resultB],

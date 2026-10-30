@@ -26,6 +26,7 @@ const {
   bindDropzone,
   refreshSheetSelector,
   readSheetTable,
+  describeRecognition,
   findAutoMatch,
   xmlEscape,
   formatPreviewValue: formatMailMergeValue,
@@ -570,9 +571,7 @@ document.getElementById('btnLoadMailMergeData').addEventListener('click', () => 
     // displayText: 문서에는 엑셀 화면에 보이는 그대로(1,500,000 / 15% / ₩1,000) 들어가야 한다
     const result = readSheetTable(mmDataPath, mmDataSheetName, { displayText: true });
     mmDataHeaders = result.headers;
-    if (result.headerRowIndex > 0) {
-      log(`제목/빈 행으로 보이는 ${result.headerRowIndex}개 행을 건너뛰고 ${result.headerRowIndex + 1}번째 행을 헤더로 인식했습니다.`, 'warn');
-    }
+    describeRecognition(result.report, result.fileInfo).forEach((item) => log(`데이터 파일 인식: ${item.text}`, item.warn ? 'warn' : 'info'));
     const renamed = result.headers.filter((k, i) => k !== result.labels[i]);
     if (renamed.length > 0) log(`이름이 같은 컬럼이 있어 ${renamed.join(', ')}(으)로 구분했습니다.`, 'warn');
 

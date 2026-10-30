@@ -6,7 +6,7 @@ const { spawnSync } = require('child_process');
 const path = require('path');
 const electronPath = require('electron'); // Node에서 require하면 설치된 Electron 실행 파일 경로
 
-const TESTS = ['visual-toggle.test.js', 'csv-dates.test.js', 'merge-split.test.js', 'workbench.test.js', 'many-columns.test.js', 'performance.test.js'];
+const TESTS = ['visual-toggle.test.js', 'recognition.test.js', 'csv-dates.test.js', 'merge-split.test.js', 'workbench.test.js', 'many-columns.test.js', 'performance.test.js'];
 const only = process.argv.slice(2);
 const TIMEOUT_MS = 10 * 60 * 1000;
 const args = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu'] : [];

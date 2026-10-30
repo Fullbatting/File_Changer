@@ -2192,3 +2192,41 @@ table.wb-grid {
   gap: 6px;
   font-size: 12.5px;
 }
+
+/* ---------- ① 인식 결과(헤더 행·인코딩·건너뛴 행) ---------- */
+.read-row {
+  flex-wrap: wrap;
+}
+
+.read-row select {
+  max-width: 100%;
+}
+
+#headerSelectA,
+#headerSelectB {
+  max-width: 260px;
+}
+
+.recog-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  text-align: left;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.recog-list li {
+  padding: 2px 0;
+  word-break: break-all;
+}
+
+.recog-list li.warn {
+  color: var(--m-error);
+  font-weight: 600;
+}
+
+.recog-list li.warn::before {
+  content: '⚠ ';
+}
