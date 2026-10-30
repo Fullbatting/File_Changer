@@ -191,7 +191,20 @@ async function run() {
   record('변환 확인 창: 요약(총 4행 · 직접 고친 값 포함)', review.open && review.text.includes('총 4행') && review.text.includes('직접 고친 값 5개 포함'), review);
   await click('convertReviewProceed', 900);
   const saved = fs.existsSync(outPath);
-  record('결과 파일 저장', saved, outPath);
+  record('결과 파일 저장(임시 파일은 남지 않음)', saved && fs.readdirSync(h.workDir).every((f) => !f.includes('.tmp')), fs.readdirSync(h.workDir));
+  const result = await js(`({ open: !document.getElementById('convertResult').hidden, title: document.getElementById('convertResultTitle').textContent, path: document.getElementById('convertResultPath').textContent, items: Array.from(document.querySelectorAll('#convertResultItems li')).map((li) => li.textContent) })`);
+  record(
+    '④ 변환 파일 확인: 다시 열어 비교한 결과·저장 경로·행 수 흐름 표시',
+    result.open &&
+      result.title.startsWith('✅ 저장하고 다시 열어 확인했습니다') &&
+      result.path === outPath &&
+      result.items[0] === '행 수: 원본(A) 데이터 4행 (읽을 때 뺀 것: 헤더 위 1행) → 결과 4행' &&
+      result.items.some((t) => t === '헤더 6개 같음') &&
+      result.items.some((t) => t === '값 24칸을 다시 읽어 비교: 글자·숫자·날짜·표시 형식 모두 같음'),
+    result
+  );
+  await click('btnShowSaved', 100);
+  record('[폴더에서 보기]는 저장한 파일 경로로', JSON.stringify(queues.shown) === JSON.stringify([outPath]), queues.shown);
   if (saved) {
     const wb = XLSX.readFile(outPath, { cellNF: true });
     const ws = wb.Sheets[wb.SheetNames[0]];
@@ -275,7 +288,7 @@ async function run() {
   record('재분석은 확인 후 상태 전체 초기화', dlg.open && dlg.title === '다시 분석할까요?' && (await chip('wbStatEdited')) === '고친 값 0개' && (await js(`document.getElementById('wbUndo').disabled`)), dlg.title);
 
   const alerts = await js(`window.__alerts`);
-  record('알림창은 변환 완료 안내 하나뿐', JSON.stringify(alerts) === JSON.stringify(['✅ 변환이 완료되었습니다.']), alerts);
+  record('알림창 없음(완료는 ③단계 확인 결과로 보여 준다)', JSON.stringify(alerts) === JSON.stringify([]), alerts);
 }
 
 run()

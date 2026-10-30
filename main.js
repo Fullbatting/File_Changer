@@ -1,7 +1,7 @@
 // main.js
 // Electron 메인 프로세스: 앱 창 생성 및 파일 다이얼로그(open/save) IPC 처리
 
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 
 let mainWindow = null;
@@ -88,6 +88,12 @@ ipcMain.handle('dialog:saveFile', async (event, args = {}) => {
  * Windows: %APPDATA%/doc-convert-mailmerge, macOS: ~/Library/Application Support/doc-convert-mailmerge
  */
 ipcMain.handle('app:getUserDataPath', () => app.getPath('userData'));
+
+/** 저장한 결과 파일을 파일 탐색기(Finder)에서 선택된 상태로 보여 준다 */
+ipcMain.handle('shell:showItemInFolder', (event, filePath) => {
+  if (typeof filePath === 'string' && filePath) shell.showItemInFolder(filePath);
+  return true;
+});
 
 /**
  * 폴더 선택 다이얼로그 (메일머지 일괄 생성 결과를 저장할 폴더 선택용)

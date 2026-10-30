@@ -160,6 +160,20 @@
         <div class="btn-row">
           <button id="btnConvert" class="btn primary">⚙️ 변환 실행 및 저장</button>
         </div>
+        <div id="convertProgress" class="convert-progress" role="status" hidden>
+          <progress id="convertProgressBar" max="100" value="0"></progress>
+          <span id="convertProgressText" class="wb-muted"></span>
+          <button id="btnCancelConvert" class="btn ghost small" type="button">취소</button>
+        </div>
+        <div id="convertResult" class="convert-result" role="status" aria-live="polite" hidden>
+          <div class="convert-result-head">
+            <b id="convertResultTitle"></b>
+            <span class="wb-spacer"></span>
+            <button id="btnShowSaved" class="btn ghost small" type="button">폴더에서 보기</button>
+          </div>
+          <div id="convertResultPath" class="convert-result-path"></div>
+          <ul id="convertResultItems" class="recog-list"></ul>
+        </div>
       </div>
 
     </section>

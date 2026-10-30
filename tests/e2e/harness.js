@@ -12,7 +12,7 @@ const os = require('os');
 const REPO = path.join(__dirname, '..', '..');
 
 function createHarness(name) {
-  const queues = { open: [], save: [], folder: [] };
+  const queues = { open: [], save: [], folder: [], shown: [] };
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), `wb-e2e-userdata-`));
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), `wb-e2e-work-`));
   const results = [];
@@ -23,6 +23,10 @@ function createHarness(name) {
   ipcMain.handle('dialog:saveFile', async () => queues.save.shift() || null);
   ipcMain.handle('dialog:selectFolder', async () => queues.folder.shift() || null);
   ipcMain.handle('app:getUserDataPath', () => userDataDir);
+  ipcMain.handle('shell:showItemInFolder', async (e, p) => {
+    queues.shown.push(p);
+    return true;
+  });
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

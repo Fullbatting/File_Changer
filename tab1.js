@@ -6,7 +6,8 @@
 const { ipcRenderer } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const ExcelJS = require('exceljs');
+const excelWriter = require('./excel-writer.js');
+const outputCheck = require('./output-check.js');
 const XLSX = require('xlsx');
 const common = require('./common.js');
 const { createWorkbench } = require('./mapping-workbench.js');
@@ -734,6 +735,8 @@ function resetAnalysisState() {
   workbench.reset();
   workbench.render();
   if (presetSelect) presetSelect.value = '';
+  const resultEl = document.getElementById('convertResult');
+  if (resultEl) resultEl.hidden = true;
   if (mergeReportEl) {
     mergeReportEl.hidden = true;
     mergeReportEl.innerHTML = '';
@@ -1602,24 +1605,6 @@ onUserDataPathReady(() => loadPresetsFromDisk());
 
 /* ---------- 변환 실행 및 저장 ---------- */
 
-/**
- * 문자열의 화면상 표시 폭을 추정한다. 한글/한자 등 전각 문자는 영문자보다
- * 넓게 표시되므로 가중치를 주어, 엑셀 열 너비를 실제 내용에 맞게 계산할 때
- * 한글이 많이 섞인 데이터에서도 "###" 잘림이 생기지 않도록 한다.
- */
-function visualWidth(str) {
-  let w = 0;
-  for (const ch of String(str)) {
-    const code = ch.codePointAt(0);
-    const isWide =
-      (code >= 0x1100 && code <= 0x11ff) || // 한글 자모
-      (code >= 0x3130 && code <= 0x318f) || // 한글 호환 자모
-      (code >= 0xac00 && code <= 0xd7a3) || // 한글 완성형 음절
-      (code >= 0x4e00 && code <= 0x9fff); // CJK 통합 한자
-    w += isWide ? 1.8 : 1;
-  }
-  return w;
-}
 
 // 변환 결과 확인(요약) 모달
 const convertReviewModal = document.getElementById('convertReviewModal');
@@ -1637,9 +1622,35 @@ const convertReviewCancelBtn = document.getElementById('convertReviewCancel');
  * 문제가 있어도 저장을 막지는 않고 사용자가 확인 후 진행/취소를 선택한다
  * (CSV 임포트 도구들의 allowInvalidSubmit 기본 동작과 같은 취지).
  */
+/**
+ * 원본에서 결과까지 행 수가 어떻게 바뀌었는지와 그 이유: [{ text, warn }]
+ * 원본(A)을 읽을 때 뺀 행(헤더 위·완전히 빈 행) → 합치기로 덧붙이거나 늘어난 행·빠진 추가 원본 행 → 결과 행 수
+ */
+function describeRowFlow(rowCount) {
+  const items = [];
+  const report = source.report;
+  if (report) {
+    const removed = [];
+    if (report.skippedRows.length) removed.push(`헤더 위 ${report.skippedRows.length}행`);
+    if (report.emptyRowsRemoved) removed.push(`완전히 빈 행 ${report.emptyRowsRemoved}개`);
+    items.push({ text: `원본(A) 데이터 ${report.dataRowCount}행${removed.length ? ` (읽을 때 뺀 것: ${removed.join(', ')})` : ''}`, warn: false });
+  }
+  (source.joinReports || []).forEach((r) => {
+    const parts = [];
+    if (r.addedRows) parts.push(`${r.addedRows}행 덧붙임`);
+    if (r.expandedRows) parts.push(`겹친 기준값으로 ${r.expandedRows}행 늘어남`);
+    if (r.excludedRows) parts.push(`${r.label} 행 ${r.excludedRows}개는 들어가지 않음`);
+    if (parts.length) items.push({ text: `합치기 ${r.label}: ${parts.join(', ')}`, warn: r.excludedRows > 0 });
+  });
+  items.push({ text: `결과 ${rowCount}행`, warn: false });
+  return items;
+}
+
 function showConvertReviewModal(derived, sheets) {
   const lines = [];
   lines.push(`<div class="review-line ok">총 <b>${derived.rowCount}</b>행을 저장합니다.</div>`);
+  const flow = describeRowFlow(derived.rowCount);
+  if (flow.length > 1) lines.push(`<div class="review-line ${flow.some((f) => f.warn) ? 'warn' : 'info'}">행 수: ${xmlEscape(flow.map((f) => f.text).join(' → '))}</div>`);
   if (sheets) {
     const parts = sheets.filter((s) => !s.isAll).map((s) => `${s.name} ${s.rows.length}행`);
     const shown = parts.slice(0, 8).join(' · ') + (parts.length > 8 ? ` 외 ${parts.length - 8}개` : '');
@@ -1647,7 +1658,7 @@ function showConvertReviewModal(derived, sheets) {
     if (parts.length > SPLIT_WARN_SHEETS) lines.push(`<div class="review-line warn">시트가 ${parts.length}개로 많습니다. 나눌 컬럼이 맞는지 확인하세요.</div>`);
   }
   (source.joinReports || []).forEach((r) => {
-    lines.push(`<div class="review-line ${r.unmatchedRows || r.duplicateRows ? 'warn' : 'ok'}">원본 합치기 — ${xmlEscape(mergeSources.describeJoinReport(r))}</div>`);
+    lines.push(`<div class="review-line ${mergeSources.describeJoinReportDetail(r).warn ? 'warn' : 'ok'}">원본 합치기 — ${xmlEscape(mergeSources.describeJoinReport(r))}</div>`);
   });
 
   const missingEntries = Object.entries(derived.missingByColumn).filter(([, count]) => count > 0);
@@ -1712,104 +1723,7 @@ function showConvertReviewModal(derived, sheets) {
   return confirmModal(convertReviewModal, convertReviewProceedBtn, convertReviewCancelBtn);
 }
 
-/** Date를 엑셀 날짜 일련번호로. 시간대 계산 없이 화면에 보이는 연/월/일/시/분/초 그대로 옮긴다 */
-function toExcelDateSerial(d) {
-  const utc = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds());
-  return (utc - Date.UTC(1899, 11, 30)) / 86400000;
-}
 
-/**
- * [Load] 변환된 데이터를 서식이 적용된 엑셀 파일로 내보낸다 (exceljs 사용).
- * - 헤더 행: 배경색 + 흰 글자 + 굵게 + 테두리, 첫 행 고정(스크롤해도 헤더 유지)
- * - 열 너비: 헤더/값의 실제 표시 폭에 맞춰 자동 조정 → "###" 잘림 방지
- * - 숫자 열: 빈 값을 뺀 모든 값이 숫자인 열은 천단위 구분(#,##0) 서식과 우측 정렬을 적용한다.
- *   숫자로 저장하는 것은 실제 숫자 값뿐이다 — 엑셀 원본은 원본에서 숫자였던 칸만, CSV·한글 문서
- *   표는 읽을 때 "안전한 숫자 글자"만 있는 열을 숫자로 바꿔 두므로(normalizeTextSource) 사번·
- *   계좌번호처럼 일부러 글자로 둔 값은 바뀌지 않는다. columnKinds를 넘기면(매핑 작업대) 그 판정을
- *   그대로 쓰고, 숫자 열 안에서 글자로 고친 칸은 그 칸만 글자로 쓴다.
- * - 날짜: 엑셀 날짜 일련번호 + "yyyy-mm-dd"(시각이 있으면 "yyyy-mm-dd hh:mm:ss") 서식.
- *   JS Date를 exceljs에 그대로 넘기면 UTC 기준으로 저장되어 한국 시간에서는 하루 전
- *   날짜가 되고 표시 형식도 미국식(mm-dd-yy)이 되므로 직접 일련번호로 바꾼다.
- * - numberFormats: 원본 컬럼의 숫자 표시 형식(%, 통화 등). 있으면 기본 천단위 서식 대신 쓴다.
- * - sheets: [{ name, rows }]를 주면 시트 여러 개로 나눠 쓴다(열 판정은 전체 행 기준으로 같게).
- * headers는 값을 찾을 컬럼키, labels는 헤더 행에 보일 이름이다.
- */
-async function buildStyledExcelBuffer(headers, labels, rows, sheetName, { numberFormats = {}, columnKinds = null, sheets = null } = {}) {
-  const workbook = new ExcelJS.Workbook();
-
-  const columnIsNumeric = columnKinds
-    ? columnKinds.map((k) => k.kind === 'number')
-    : headers.map((h) => {
-        let sawAny = false;
-        for (const row of rows) {
-          const v = row[h];
-          if (isEmptyValue(v)) continue;
-          sawAny = true;
-          if (!isNumericCell(v)) return false;
-        }
-        return sawAny;
-      });
-  const columnHasDecimal = headers.map(
-    (h, i) => columnIsNumeric[i] && rows.some((row) => isNumericCell(row[h]) && !Number.isInteger(Number(row[h])))
-  );
-
-  const writeSheet = (name, sheetRows) => {
-    const worksheet = workbook.addWorksheet(name || 'Converted');
-    worksheet.addRow(labels);
-    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
-
-    const headerRow = worksheet.getRow(1);
-    headerRow.eachCell((cell) => {
-      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3864' } };
-      cell.alignment = { vertical: 'middle', horizontal: 'center' };
-      cell.border = {
-        top: { style: 'thin', color: { argb: 'FFB0B0B0' } },
-        bottom: { style: 'thin', color: { argb: 'FFB0B0B0' } },
-        left: { style: 'thin', color: { argb: 'FFB0B0B0' } },
-        right: { style: 'thin', color: { argb: 'FFB0B0B0' } },
-      };
-    });
-
-    sheetRows.forEach((row) => {
-      const values = headers.map((h) => {
-        const raw = row[h];
-        if (isEmptyValue(raw)) return '';
-        if (raw instanceof Date) return toExcelDateSerial(raw);
-        return raw;
-      });
-      const excelRow = worksheet.addRow(values);
-      excelRow.eachCell((cell, colNumber) => {
-        const i = colNumber - 1;
-        const raw = row[headers[i]];
-        if (raw instanceof Date) {
-          const hasTime = raw.getHours() !== 0 || raw.getMinutes() !== 0 || raw.getSeconds() !== 0;
-          cell.numFmt = hasTime ? 'yyyy-mm-dd hh:mm:ss' : 'yyyy-mm-dd';
-          cell.alignment = { horizontal: 'center' };
-        } else if (columnIsNumeric[i] && isNumericCell(raw)) {
-          cell.numFmt = numberFormats[headers[i]] || (columnHasDecimal[i] ? '#,##0.######' : '#,##0');
-          cell.alignment = { horizontal: 'right' };
-        } else {
-          cell.alignment = { horizontal: 'left' };
-        }
-      });
-    });
-
-    headers.forEach((h, i) => {
-      let maxWidth = visualWidth(labels[i]);
-      sheetRows.forEach((row) => {
-        const v = row[h];
-        if (isEmptyValue(v)) return;
-        maxWidth = Math.max(maxWidth, visualWidth(formatPreviewValue(v)));
-      });
-      worksheet.getColumn(i + 1).width = Math.min(40, Math.max(8, Math.ceil(maxWidth) + 2));
-    });
-  };
-
-  if (sheets && sheets.length > 0) sheets.forEach((s) => writeSheet(s.name, s.rows));
-  else writeSheet(sheetName, rows);
-  return workbook.xlsx.writeBuffer();
-}
 
 /* -------------------------------------------------------------------------
  * 결과 시트 나누기: 타겟 컬럼 하나의 값마다 시트를 따로 만든다(예: 부서명 → 영업팀·개발팀 시트).
@@ -1974,17 +1888,150 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
       if (aCol && source.numberFormats[aCol]) numberFormats[bCol] = source.numberFormats[aCol];
     });
 
-    // [Load] 헤더 서식·열 너비·숫자 서식을 적용하여 완성된 엑셀 파일로 저장한다
-    const outputBuffer = await buildStyledExcelBuffer(headersB, labelsB, derived.getRows(), sheetBName, {
-      numberFormats,
-      columnKinds: derived.kinds,
-      sheets,
-    });
-    safeWriteFileSync(savePath, outputBuffer);
+    const allRows = derived.getRows();
+    const sheetList = sheets || [{ name: sheetBName || 'Converted', rows: allRows }];
+    const formatOf = excelWriter.makeCellFormatter(headersB, allRows, { numberFormats, columnKinds: derived.kinds });
+    const outcome = await saveAndVerify(savePath, { headers: headersB, labels: labelsB, sheets: sheetList, formatOf });
+    if (!outcome) return; // 취소
 
     log(`변환된 파일이 저장되었습니다: ${savePath}${sheets ? ` (시트 ${sheets.length}개)` : ''}${overrides.size > 0 ? ` (직접 고친 값 ${overrides.size}개 포함)` : ''}`, 'ok');
-    alert('✅ 변환이 완료되었습니다.');
+    const { check } = outcome;
+    if (check.ok) log(`저장한 파일을 다시 열어 확인했습니다: 시트 ${check.sheetNames.length}개, 값 ${check.checkedCells}칸 모두 같음`, 'ok');
+    else log(`저장한 파일을 다시 열어 보니 ${check.problemCount}곳이 다릅니다. ③단계의 확인 결과를 보세요.`, 'warn');
+    renderConvertResult(savePath, derived, sheetList, outcome);
   } catch (err) {
     notifyError('데이터 변환 중 오류가 발생했습니다', err);
+  } finally {
+    setConvertBusy(false);
   }
+});
+
+/* -------------------------------------------------------------------------
+ * 저장과 ④ 변환 파일 확인
+ * 같은 폴더의 임시 파일에 (스트리밍으로) 쓰고 → 그 파일을 디스크에서 다시 열어 시트·헤더·행 수·칸 값·
+ * 표시 형식을 저장하려던 표와 비교한 뒤 → 원래 이름으로 바꾼다. 다시 열 수 없으면(깨진 파일) 원래 이름으로
+ * 바꾸지 않아, 이미 있던 같은 이름의 파일을 망가뜨리지 않는다. 값이 다른 곳이 있으면 저장은 하되 목록으로 알린다.
+ * ------------------------------------------------------------------------- */
+
+const convertProgressEl = document.getElementById('convertProgress');
+const convertProgressBar = document.getElementById('convertProgressBar');
+const convertProgressText = document.getElementById('convertProgressText');
+const convertResultEl = document.getElementById('convertResult');
+const btnConvert = document.getElementById('btnConvert');
+let cancelSaveRequested = false;
+let lastSavedPath = null;
+
+function setConvertBusy(busy, text = '') {
+  btnConvert.disabled = busy;
+  convertProgressEl.hidden = !busy;
+  if (busy) {
+    convertProgressBar.value = 0;
+    convertProgressText.textContent = text;
+  }
+}
+
+function removeQuietly(p) {
+  try {
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  } catch (e) {
+    /* 임시 파일 정리 실패는 결과에 영향 없음 */
+  }
+}
+
+/** 반환: { check, writeMs, verifyMs } · 사용자가 취소하면 null */
+async function saveAndVerify(savePath, { headers, labels, sheets, formatOf }) {
+  const tempPath = path.join(path.dirname(savePath), `~${path.basename(savePath, path.extname(savePath))}.${process.pid}.tmp.xlsx`);
+  cancelSaveRequested = false;
+  convertResultEl.hidden = true;
+  const total = sheets.reduce((n, s) => n + s.rows.length, 0);
+  setConvertBusy(true, `0 / ${total}행 쓰는 중…`);
+  const t0 = performance.now();
+  try {
+    await excelWriter.writeStyledExcel(
+      {
+        headers,
+        labels,
+        sheets,
+        formatOf,
+        onProgress: (done, all) => {
+          convertProgressBar.value = all ? Math.round((done / all) * 90) : 90;
+          convertProgressText.textContent = `${done} / ${all}행 쓰는 중…`;
+        },
+        shouldCancel: () => cancelSaveRequested,
+      },
+      tempPath
+    );
+  } catch (err) {
+    removeQuietly(tempPath);
+    if (err.cancelled) {
+      log('저장을 취소했습니다. 파일은 만들지 않았습니다.', 'warn');
+      return null;
+    }
+    throw err;
+  }
+  const writeMs = performance.now() - t0;
+
+  convertProgressBar.value = 92;
+  convertProgressText.textContent = '저장한 파일을 다시 열어 확인하는 중…';
+  await new Promise((r) => setTimeout(r, 0));
+  const t1 = performance.now();
+  let check;
+  try {
+    const reread = XLSX.read(fs.readFileSync(tempPath), { type: 'buffer', cellNF: true });
+    check = outputCheck.verifyWorkbook(reread, { headers, labels, sheets, formatOf, toSerial: excelWriter.toExcelDateSerial });
+  } catch (err) {
+    removeQuietly(tempPath);
+    throw new Error(`저장한 파일을 다시 열 수 없어 저장하지 않았습니다: ${friendlyErrorMessage(err)}`);
+  }
+  const verifyMs = performance.now() - t1;
+  try {
+    fs.renameSync(tempPath, savePath);
+  } catch (err) {
+    removeQuietly(tempPath);
+    err.path = err.path || savePath;
+    throw err;
+  }
+  convertProgressBar.value = 100;
+  return { check, writeMs, verifyMs };
+}
+
+/** ④ 확인 결과: 저장 경로, 행 수 흐름, 시트·헤더·값 비교, 다른 곳 목록 */
+function renderConvertResult(savePath, derived, sheetList, { check, writeMs, verifyMs }) {
+  lastSavedPath = savePath;
+  document.getElementById('convertResultTitle').textContent = check.ok
+    ? '✅ 저장하고 다시 열어 확인했습니다 — 저장하려던 표와 같습니다'
+    : `⚠ 저장했지만 다시 열어 보니 ${check.problemCount}곳이 다릅니다`;
+  convertResultEl.classList.toggle('warn', !check.ok);
+  document.getElementById('convertResultPath').textContent = savePath;
+  const list = document.getElementById('convertResultItems');
+  list.innerHTML = '';
+  const add = ({ text, warn }) => {
+    const li = document.createElement('li');
+    li.textContent = text;
+    if (warn) li.className = 'warn';
+    list.appendChild(li);
+  };
+  add({ text: `행 수: ${describeRowFlow(derived.rowCount).map((f) => f.text).join(' → ')}`, warn: describeRowFlow(derived.rowCount).some((f) => f.warn) });
+  const rowsProblem = check.problems.some((p) => p.kind === 'rows' || p.kind === 'sheets');
+  add({ text: `시트 ${sheetList.length}개: ${sheetList.map((s) => `${s.name} ${check.rowCounts[s.name] !== undefined ? check.rowCounts[s.name] : 0}행`).join(' · ')}`, warn: rowsProblem });
+  add({ text: check.headerOk ? `헤더 ${labelsB.length}개 같음` : '헤더 이름이 다른 곳이 있음', warn: !check.headerOk });
+  add({
+    text: check.ok
+      ? `값 ${check.checkedCells}칸을 다시 읽어 비교: 글자·숫자·날짜·표시 형식 모두 같음`
+      : `값 ${check.checkedCells}칸을 다시 읽어 비교: 다른 곳 ${check.problemCount}개${check.problemCount > check.problems.length ? ` (앞 ${check.problems.length}개만 표시)` : ''}`,
+    warn: !check.ok,
+  });
+  check.problems.slice(0, 20).forEach((p) => add({ text: outputCheck.describeProblem(p), warn: true }));
+  add({ text: `걸린 시간: 쓰기 ${(writeMs / 1000).toFixed(1)}초 · 다시 열어 확인 ${(verifyMs / 1000).toFixed(1)}초`, warn: false });
+  convertResultEl.hidden = false;
+  convertResultEl.scrollIntoView({ block: 'nearest' });
+}
+
+document.getElementById('btnCancelConvert').addEventListener('click', () => {
+  cancelSaveRequested = true;
+  convertProgressText.textContent = '취소하는 중…';
+});
+
+document.getElementById('btnShowSaved').addEventListener('click', () => {
+  if (lastSavedPath) ipcRenderer.invoke('shell:showItemInFolder', lastSavedPath);
 });
