@@ -357,11 +357,11 @@ function readWorkbookSmart(filePath, { encoding = 'auto' } = {}) {
       // raw:true — CSV 글자를 숫자/날짜로 추측 변환하지 않는다. 변환하면 전화번호
       // '01012345678'·우편번호 '03187'의 앞자리 0이 사라지고 '2026-01-15'가 날짜
       // 일련번호(46037)로 바뀐다. 날짜·숫자 글자는 탭1에서 열 단위로 확인해 바꾼다.
-      workbook = XLSX.read(decoded.text, { type: 'string', raw: true });
+      workbook = XLSX.read(decoded.text, { type: 'string', raw: true, dense: true });
     } else {
       // 날짜는 cellDates 대신 readCellValue에서 직접 푼다(이유는 그 함수 설명 참고). cellNF는 셀의
       // 표시 형식(z)을 남겨 날짜 셀·앞자리 0 채움 셀을 알아보기 위해 필요하다.
-      workbook = XLSX.read(buffer, { type: 'buffer', cellNF: true });
+      workbook = XLSX.read(buffer, { type: 'buffer', cellNF: true, dense: true });
     }
   }
   fileInfo.date1904 = tableReader.isDate1904(workbook);

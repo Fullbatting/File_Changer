@@ -8,6 +8,8 @@ const fs = require('fs');
 const path = require('path');
 const excelWriter = require('./excel-writer.js');
 const outputCheck = require('./output-check.js');
+const verifyWorker = require('./verify-worker.js');
+const childProcess = require('child_process');
 const XLSX = require('xlsx');
 const common = require('./common.js');
 const { createWorkbench } = require('./mapping-workbench.js');
@@ -777,6 +779,7 @@ function bindTab1File(which, dropEl, fileNameEl, sheetRowEl, sheetSelectEl) {
     else fileBPath = p;
     readOptions[which] = { headerRowIndex: null, encoding: 'auto' };
     log(`${which === 'A' ? '원본(A)' : '타겟(B)'} 파일 선택됨: ${p}`);
+    const readStart = performance.now();
     resetAnalysisState();
     refreshSheetSelector(
       p,
@@ -790,6 +793,8 @@ function bindTab1File(which, dropEl, fileNameEl, sheetRowEl, sheetSelectEl) {
     );
     sheetSelectEl.dataset.committed = sheetSelectEl.value;
     renderRecognition(which);
+    // 파일 읽기(파싱 + 표 만들기)는 여기서 한 번 하고 [구조 분석]은 읽어 둔 워크북을 쓴다 — 시간도 여기서 잰다
+    log(`${which === 'A' ? '원본(A)' : '타겟(B)'} 파일 읽기 ${Math.round(performance.now() - readStart)}ms`);
     if (which === 'A') refreshExtraSources({ resetKeys: true });
   });
 }
@@ -1235,6 +1240,7 @@ document.getElementById('btnAnalyze').addEventListener('click', async () => {
     }
     if (source && !(await confirmDiscardOverrides('다시 분석할까요?'))) return;
     log(`구조 분석을 시작합니다... (A 시트: ${sheetAName || '첫 번째 시트'}, B 시트: ${sheetBName || '첫 번째 시트'})`);
+    const analyzeStart = performance.now();
     const resultA = readTableFor('A');
     normalizeTextSource(resultA, fileAPath, '원본(A)');
     const resultB = readTableFor('B');
@@ -1273,6 +1279,7 @@ document.getElementById('btnAnalyze').addEventListener('click', async () => {
     renderSplitOptions({ recompute: true });
     analyzeStatus.textContent = '분석 완료';
     analyzeStatus.className = 'pill ok';
+    log(`구조 분석 ${Math.round(performance.now() - analyzeStart)}ms`);
     log('매핑 작업대가 준비되었습니다. 연결과 결과 미리보기를 확인하세요.', 'ok');
     const suggestion = getPresetSuggestion();
     if (suggestion) log(`저장된 프리셋 "${suggestion.preset.name}"이(가) 이 양식과 ${suggestion.total}열 중 ${suggestion.matched}열 같습니다.`);
@@ -1890,8 +1897,9 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
 
     const allRows = derived.getRows();
     const sheetList = sheets || [{ name: sheetBName || 'Converted', rows: allRows }];
-    const formatOf = excelWriter.makeCellFormatter(headersB, allRows, { numberFormats, columnKinds: derived.kinds });
-    const outcome = await saveAndVerify(savePath, { headers: headersB, labels: labelsB, sheets: sheetList, formatOf });
+    const columnKinds = derived.kinds.map((k) => ({ kind: k.kind }));
+    const formatOf = excelWriter.makeCellFormatter(headersB, allRows, { numberFormats, columnKinds });
+    const outcome = await saveAndVerify(savePath, { headers: headersB, labels: labelsB, sheets: sheetList, formatOf, numberFormats, columnKinds });
     if (!outcome) return; // 취소
 
     log(`변환된 파일이 저장되었습니다: ${savePath}${sheets ? ` (시트 ${sheets.length}개)` : ''}${overrides.size > 0 ? ` (직접 고친 값 ${overrides.size}개 포함)` : ''}`, 'ok');
@@ -1938,8 +1946,49 @@ function removeQuietly(p) {
   }
 }
 
+/**
+ * 저장한 파일을 별도 프로세스(verify-worker.js)에서 다시 열어 비교한다 — 큰 파일을 여는 동안 창이 멈추지 않고
+ * [취소]로 끝낼 수 있다. 프로세스를 띄우지 못하면 이 화면에서 같은 함수로 확인한다.
+ * 반환: 비교 결과 · 취소하면 null
+ */
+function verifyInChild(job) {
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = childProcess.fork(path.join(__dirname, 'verify-worker.js'), [], {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        serialization: 'advanced', // Date를 그대로 주고받는다
+        stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
+      });
+    } catch (err) {
+      resolve(verifyWorker.verifyFile(job));
+      return;
+    }
+    let settled = false;
+    let stderr = '';
+    child.stderr.on('data', (d) => {
+      stderr += d;
+    });
+    const finish = (fn) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(cancelPoll);
+      fn();
+    };
+    const cancelPoll = setInterval(() => {
+      if (!cancelSaveRequested) return;
+      child.kill();
+      finish(() => resolve(null));
+    }, 100);
+    child.once('message', (reply) => finish(() => (reply.ok ? resolve(reply.result) : reject(new Error(reply.message)))));
+    child.once('error', (err) => finish(() => reject(err)));
+    child.once('exit', (code) => finish(() => reject(new Error(`확인 프로세스가 끝났습니다(코드 ${code}) ${stderr.slice(0, 300)}`))));
+    child.send(job);
+  });
+}
+
 /** 반환: { check, writeMs, verifyMs } · 사용자가 취소하면 null */
-async function saveAndVerify(savePath, { headers, labels, sheets, formatOf }) {
+async function saveAndVerify(savePath, { headers, labels, sheets, formatOf, numberFormats, columnKinds }) {
   const tempPath = path.join(path.dirname(savePath), `~${path.basename(savePath, path.extname(savePath))}.${process.pid}.tmp.xlsx`);
   cancelSaveRequested = false;
   convertResultEl.hidden = true;
@@ -1977,11 +2026,15 @@ async function saveAndVerify(savePath, { headers, labels, sheets, formatOf }) {
   const t1 = performance.now();
   let check;
   try {
-    const reread = XLSX.read(fs.readFileSync(tempPath), { type: 'buffer', cellNF: true });
-    check = outputCheck.verifyWorkbook(reread, { headers, labels, sheets, formatOf, toSerial: excelWriter.toExcelDateSerial });
+    check = await verifyInChild({ filePath: tempPath, headers, labels, sheets, numberFormats, columnKinds });
   } catch (err) {
     removeQuietly(tempPath);
     throw new Error(`저장한 파일을 다시 열 수 없어 저장하지 않았습니다: ${friendlyErrorMessage(err)}`);
+  }
+  if (!check) {
+    removeQuietly(tempPath);
+    log('확인 중에 저장을 취소했습니다. 파일은 만들지 않았습니다.', 'warn');
+    return null;
   }
   const verifyMs = performance.now() - t1;
   try {

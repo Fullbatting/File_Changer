@@ -4,6 +4,7 @@
 // (tests/unit/output-check.test.js).
 
 const XLSX = require('xlsx');
+const { cellAt } = require('./table-reader.js');
 
 const MAX_LISTED_PROBLEMS = 50;
 const DATE_TOLERANCE_DAYS = 1e-6; // 약 0.09초 — 초 단위까지 같은지 본다
@@ -88,7 +89,7 @@ function verifyWorkbook(workbook, { headers, labels, sheets, formatOf = () => nu
     rowCounts[s.name] = Math.max(0, lastRow);
 
     labels.forEach((label, c) => {
-      const cell = ws[XLSX.utils.encode_cell({ r: 0, c })];
+      const cell = cellAt(ws, 0, c);
       const actual = cell && !isEmpty(cell.v) ? String(cell.v) : '';
       if (actual !== String(label)) {
         headerOk = false;
@@ -98,7 +99,7 @@ function verifyWorkbook(workbook, { headers, labels, sheets, formatOf = () => nu
     if (range && range.e.c >= labels.length) {
       for (let r = 0; r <= range.e.r; r++) {
         for (let c = labels.length; c <= range.e.c; c++) {
-          const cell = ws[XLSX.utils.encode_cell({ r, c })];
+          const cell = cellAt(ws, r, c);
           if (cell && !isEmpty(cell.v)) {
             add({ kind: 'extra', sheet: s.name, rowNumber: r + 1, column: XLSX.utils.encode_col(c), expected: '(없음)', actual: showCell(cell), reason: '헤더 밖에 값이 있음' });
           }
@@ -117,7 +118,7 @@ function verifyWorkbook(workbook, { headers, labels, sheets, formatOf = () => nu
       headers.forEach((h, c) => {
         checkedCells += 1;
         const raw = row[h];
-        const diff = compareCell(raw, ws[XLSX.utils.encode_cell({ r: ri + 1, c })], formatOf(c, raw), toSerial);
+        const diff = compareCell(raw, cellAt(ws, ri + 1, c), formatOf(c, raw), toSerial);
         if (diff) add({ kind: 'value', sheet: s.name, rowNumber: ri + 2, column: labels[c], ...diff });
       });
     });

@@ -107,6 +107,24 @@ function dateWorkbook(date1904) {
   return XLSX.read(buffer, { type: 'buffer', cellNF: true });
 }
 
+test('dense 모드(행 배열)로 읽은 시트도 같은 표: 제목 행·B2 시작·병합·형식', () => {
+  const ws = sheet([['', '', ''], ['', '명단', ''], ['', '이름', '급여'], ['', '홍길동', 1500000], ['', '', 2000]]);
+  ws.C4.z = '#,##0';
+  ws['!merges'] = [{ s: { r: 3, c: 1 }, e: { r: 4, c: 1 } }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'S');
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const sparse = t.buildTableFromSheet(XLSX.read(buffer, { type: 'buffer', cellNF: true }).Sheets.S, 'S');
+  const denseSheet = XLSX.read(buffer, { type: 'buffer', cellNF: true, dense: true }).Sheets.S;
+  assert.ok(denseSheet['!data'], 'dense 시트가 아님');
+  const dense = t.buildTableFromSheet(denseSheet, 'S');
+  assert.deepStrictEqual(dense.rows, sparse.rows);
+  assert.deepStrictEqual(dense.rows, [{ 이름: '홍길동', 급여: 1500000 }, { 이름: '홍길동', 급여: 2000 }]);
+  assert.deepStrictEqual(dense.rowNumbers, [4, 5]);
+  assert.deepStrictEqual(dense.numberFormats, { 급여: '#,##0' });
+  assert.strictEqual(t.cellAt(denseSheet, 2, 1).v, '이름');
+});
+
 test('1900 날짜 체계: 날짜와 날짜+시각', () => {
   const wb = dateWorkbook(false);
   assert.strictEqual(t.isDate1904(wb), false);

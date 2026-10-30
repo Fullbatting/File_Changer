@@ -12,7 +12,8 @@
     "start": "electron .",
     "test:e2e": "node tests/e2e/run.js",
     "test:unit": "node tests/unit/run.js",
-    "test": "npm run test:unit && npm run test:e2e"
+    "test": "npm run test:unit && npm run test:e2e",
+    "bench": "node tests/perf/benchmark.js"
   },
   "dependencies": {
     "docxtemplater": "^3.47.2",

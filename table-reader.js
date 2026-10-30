@@ -174,6 +174,19 @@ function formatPreviewValue(val) {
 }
 
 /**
+ * 시트의 (r, c) 칸(0부터, 시트 절대 위치). 큰 파일을 빠르고 가볍게 읽도록 워크북을 dense 모드(행 배열)로
+ * 읽으므로 두 저장 방식(dense의 !data, 일반의 "A1" 키)을 모두 받는다.
+ */
+function cellAt(sheet, r, c) {
+  const data = sheet['!data'];
+  if (data) {
+    const row = data[r];
+    return row ? row[c] : undefined;
+  }
+  return sheet[XLSX.utils.encode_cell({ r, c })];
+}
+
+/**
  * 시트를 2차원 배열로 읽는다. 행/열 번호는 시트의 사용 범위(!ref) 시작점 기준이다 —
  * 표가 A1이 아니라 B2 같은 곳에서 시작해도 헤더 찾기와 데이터 읽기가 같은 배열을
  * 쓰므로 어긋나지 않는다. 서식만 남은 먼 빈 칸 때문에 범위가 쓸데없이 커지지 않도록
@@ -185,19 +198,32 @@ function sheetToGrid(sheet, displayText, date1904 = false) {
   const start = XLSX.utils.decode_range(sheet['!ref']).s;
   let lastRow = start.r - 1;
   let lastCol = start.c - 1;
-  Object.keys(sheet).forEach((key) => {
-    if (key[0] === '!') return;
-    const v = sheet[key] && sheet[key].v;
-    if (v === undefined || v === null || v === '') return;
-    const addr = XLSX.utils.decode_cell(key);
-    if (addr.r > lastRow) lastRow = addr.r;
-    if (addr.c > lastCol) lastCol = addr.c;
-  });
+  const filled = (cell) => cell && cell.v !== undefined && cell.v !== null && cell.v !== '';
+  const data = sheet['!data'];
+  if (data) {
+    data.forEach((row, r) => {
+      if (!row) return;
+      for (let c = row.length - 1; c >= 0; c--) {
+        if (!filled(row[c])) continue;
+        if (r > lastRow) lastRow = r;
+        if (c > lastCol) lastCol = c;
+        break;
+      }
+    });
+  } else {
+    Object.keys(sheet).forEach((key) => {
+      if (key[0] === '!' || !filled(sheet[key])) return;
+      const addr = XLSX.utils.decode_cell(key);
+      if (addr.r > lastRow) lastRow = addr.r;
+      if (addr.c > lastCol) lastCol = addr.c;
+    });
+  }
 
   const grid = [];
   for (let r = start.r; r <= lastRow; r++) {
     const row = [];
-    for (let c = start.c; c <= lastCol; c++) row.push(readCellValue(sheet[XLSX.utils.encode_cell({ r, c })], displayText, date1904));
+    const dataRow = data ? data[r] : null;
+    for (let c = start.c; c <= lastCol; c++) row.push(readCellValue(data ? dataRow && dataRow[c] : sheet[XLSX.utils.encode_cell({ r, c })], displayText, date1904));
     grid.push(row);
   }
 
@@ -392,7 +418,7 @@ function buildTableFromSheet(sheet, sheetName, { displayText = false, date1904 =
   const numberFormats = {};
   columns.forEach(({ key, index }) => {
     for (let r = headerRowIndex + 1; r < grid.length; r++) {
-      const cell = sheet[XLSX.utils.encode_cell({ r: start.r + r, c: start.c + index })];
+      const cell = cellAt(sheet, start.r + r, start.c + index);
       if (cell && cell.t === 'n' && typeof cell.z === 'string' && cell.z !== 'General' && !XLSX.SSF.is_date(cell.z)) {
         numberFormats[key] = cell.z;
         break;
@@ -472,6 +498,7 @@ module.exports = {
   ENCODING_LABELS,
   isDate1904,
   readCellValue,
+  cellAt,
   formatPreviewValue,
   sheetToGrid,
   isHeaderLikeText,

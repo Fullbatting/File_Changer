@@ -59,6 +59,13 @@ test('취소하면 CancelledError', async () => {
   await assert.rejects(writer.writeStyledExcel({ ...spec([{ name: 'S', rows: many }]), shouldCancel: () => true }), (err) => err.cancelled === true);
 });
 
+test('dense 모드로 다시 열어도 같은 결과', async () => {
+  const sheets = [{ name: '명부', rows }];
+  const buffer = await writer.writeStyledExcel(spec(sheets));
+  const result = check.verifyWorkbook(XLSX.read(buffer, { type: 'buffer', cellNF: true, dense: true }), verifySpec(sheets));
+  assert.strictEqual(result.ok, true, result.problems.map(check.describeProblem).join('\n'));
+});
+
 test('시트 여러 개: 이름·순서·시트별 행 수', async () => {
   const sheets = [{ name: '전체', rows }, { name: '영업팀', rows: rows.slice(0, 1) }, { name: '(빈 값)', rows: rows.slice(1) }];
   const result = check.verifyWorkbook(reopen(await writer.writeStyledExcel(spec(sheets))), verifySpec(sheets));

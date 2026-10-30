@@ -103,6 +103,16 @@ function columnWidths(headers, labels, rows) {
   });
 }
 
+// 칸 스타일은 같은 객체를 함께 쓴다(칸마다 새 객체를 만들면 쓰기가 눈에 띄게 느려진다)
+const TEXT_STYLE = Object.freeze({ alignment: Object.freeze({ horizontal: 'left' }) });
+const styleCache = new Map();
+function styleFor(fmt, isDate) {
+  if (!fmt) return TEXT_STYLE;
+  const key = `${isDate ? 'd' : 'n'}|${fmt}`;
+  if (!styleCache.has(key)) styleCache.set(key, Object.freeze({ numFmt: fmt, alignment: Object.freeze({ horizontal: isDate ? 'center' : 'right' }) }));
+  return styleCache.get(key);
+}
+
 class CancelledError extends Error {
   constructor() {
     super('사용자가 저장을 취소했습니다.');
@@ -139,10 +149,7 @@ async function writeSheets(workbook, streaming, { headers, labels, sheets, forma
       headers.forEach((h, i) => {
         const raw = row[h];
         if (isEmptyValue(raw)) return;
-        const cell = excelRow.getCell(i + 1);
-        const fmt = formatOf(i, raw);
-        if (fmt) cell.numFmt = fmt;
-        cell.alignment = { horizontal: raw instanceof Date ? 'center' : fmt ? 'right' : 'left' };
+        excelRow.getCell(i + 1).style = styleFor(formatOf(i, raw), raw instanceof Date);
       });
       if (streaming) excelRow.commit();
       done += 1;
@@ -167,7 +174,9 @@ async function writeStyledExcel(spec, filePath = null) {
   const formatOf = spec.formatOf || makeCellFormatter(spec.headers, allRows, spec);
   const opts = { ...spec, formatOf };
   if (filePath) {
-    const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: filePath, useStyles: true, useSharedStrings: true });
+    // 공유 문자열 표 대신 칸 안에 글자를 넣는다(inlineStr): 값이 대부분 서로 다른 큰 표에서 쓰기·다시 읽기가
+    // 빠르고 파일도 작다. 엑셀·리브레오피스 모두 읽는 표준 형식이다.
+    const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ filename: filePath, useStyles: true, useSharedStrings: false });
     await writeSheets(workbook, true, opts);
     await workbook.commit();
     return undefined;

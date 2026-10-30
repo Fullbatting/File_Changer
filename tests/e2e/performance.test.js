@@ -75,6 +75,34 @@ async function run() {
   await sleep(100);
   record('셀 수정이 반영됨', (await js(`document.getElementById('wbStatEdited').textContent`)) === '고친 값 1개', await js(`document.getElementById('wbStatEdited').textContent`));
 
+  /* 파일 읽기(파싱)부터 잰 시간: 앱 로그의 "파일 읽기 Nms" */
+  const readLog = await js(`(document.getElementById('logArea').value.match(/원본\\(A\\) 파일 읽기 (\\d+)ms/) || [])[1]`);
+  record(`1만 행 × 20열: 파일 읽기(파싱부터) ${readLog}ms — 3초 안쪽`, Number(readLog) > 0 && Number(readLog) < 3000, readLog);
+
+  /* 저장 + ④ 다시 열어 확인: 진행 중에도 화면이 멈추지 않는지(가장 긴 멈춤), 결과가 같은지 */
+  const outBig = require('path').join(h.workDir, 'big_out.xlsx');
+  queues.save.push(outBig);
+  await js(`window.__stall = { last: performance.now(), max: 0 }; window.__stallTimer = setInterval(() => { const now = performance.now(); window.__stall.max = Math.max(window.__stall.max, now - window.__stall.last); window.__stall.last = now; }, 10); true;`);
+  const saveStart = Date.now();
+  await click('btnConvert', 400);
+  await click('convertReviewProceed', 50);
+  for (let i = 0; i < 600 && (await js(`document.getElementById('convertResult').hidden`)); i++) await sleep(100);
+  const saveMs = Date.now() - saveStart;
+  const stall = await js(`clearInterval(window.__stallTimer); window.__stall.max`);
+  const resultTitle = await js(`document.getElementById('convertResultTitle').textContent`);
+  record(`1만 행 저장 + 다시 열어 확인 ${(saveMs / 1000).toFixed(1)}초 — 결과 같음`, resultTitle.startsWith('✅') && saveMs < 20000, resultTitle);
+  record(`저장·확인 중 화면이 가장 오래 멈춘 시간 ${Math.round(stall)}ms — 1초 안쪽(확인은 별도 프로세스)`, stall < 1000, stall);
+
+  /* 저장 취소: 파일을 만들지 않음 */
+  const outCancel = require('path').join(h.workDir, 'cancel_out.xlsx');
+  queues.save.push(outCancel);
+  await click('btnConvert', 400);
+  await click('convertReviewProceed', 30);
+  await click('btnCancelConvert', 50);
+  for (let i = 0; i < 200 && !(await js(`document.getElementById('convertProgress').hidden`)); i++) await sleep(100);
+  const files = require('fs').readdirSync(h.workDir);
+  record('[취소]하면 결과 파일도 임시 파일도 남지 않음', !files.includes('cancel_out.xlsx') && files.every((f) => !f.includes('.tmp')) && (await js(`document.getElementById('logArea').value.includes('저장을 취소했습니다')`)), files);
+
   /* 15) 원본 300열 × 타겟 200열 */
   const wide = makeWide(h.workDir, { rowCount: 200, sourceCols: 300, targetCols: 200, name: 'wide' });
   queues.open.push([wide.source]);
@@ -85,7 +113,7 @@ async function run() {
   await click('dropB', 300);
   const analyzeMs = await js(`const t0 = performance.now(); document.getElementById('btnAnalyze').click(); document.body.offsetHeight; performance.now() - t0`);
   await sleep(300);
-  record(`300×200 파일 읽기+자동 매핑+처음 그리기 ${analyzeMs.toFixed(0)}ms — 1초 안쪽`, analyzeMs < 1000, analyzeMs);
+  record(`300×200 구조 분석(표 정리+자동 매핑+처음 그리기, 파일 읽기는 위에서 따로 잼) ${analyzeMs.toFixed(0)}ms — 1초 안쪽`, analyzeMs < 1000, analyzeMs);
   await click('wbGroupOrder', 200);
   recordTiming('300×200: 목록 보기로 전환(전체 다시 그리기)', await measure(`document.getElementById('wbViewList').click()`, { after: `document.getElementById('wbViewConnect').click()` }), 200, 400);
   recordTiming('300×200: 연결 보기로 전환(전체 다시 그리기)', await measure(`document.getElementById('wbViewConnect').click()`, { after: `document.getElementById('wbViewList').click()` }), 200, 400);
