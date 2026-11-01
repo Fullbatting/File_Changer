@@ -3,6 +3,7 @@
 
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
+const { webPreferences, protectWindow, assertTrustedSender } = require('./app-security');
 
 let mainWindow = null;
 
@@ -13,13 +14,10 @@ function createWindow() {
     minWidth: 900,
     minHeight: 640,
     backgroundColor: '#f4f6f9',
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
-      spellcheck: false,
-    },
+    webPreferences: webPreferences(),
   });
 
+  protectWindow(mainWindow);
   mainWindow.setMenuBarVisibility(false);
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
@@ -50,6 +48,7 @@ app.on('window-all-closed', () => {
  * 반환: 선택된 파일 경로 배열 (취소 시 빈 배열)
  */
 ipcMain.handle('dialog:openFile', async (event, args = {}) => {
+  assertTrustedSender(event, mainWindow);
   const { title = '파일 선택', filters = [{ name: 'All Files', extensions: ['*'] }], multi = false } = args;
 
   const properties = ['openFile'];
@@ -71,6 +70,7 @@ ipcMain.handle('dialog:openFile', async (event, args = {}) => {
  * 반환: 선택된 저장 경로 (취소 시 null)
  */
 ipcMain.handle('dialog:saveFile', async (event, args = {}) => {
+  assertTrustedSender(event, mainWindow);
   const { title = '파일 저장', defaultPath = '', filters = [{ name: 'All Files', extensions: ['*'] }] } = args;
 
   const result = await dialog.showSaveDialog(mainWindow, {
@@ -87,10 +87,14 @@ ipcMain.handle('dialog:saveFile', async (event, args = {}) => {
  * 앱 사용자 데이터 폴더 경로 반환 (매핑 프리셋 등 앱 내부 데이터 저장용)
  * Windows: %APPDATA%/doc-convert-mailmerge, macOS: ~/Library/Application Support/doc-convert-mailmerge
  */
-ipcMain.handle('app:getUserDataPath', () => app.getPath('userData'));
+ipcMain.handle('app:getUserDataPath', (event) => {
+  assertTrustedSender(event, mainWindow);
+  return app.getPath('userData');
+});
 
 /** 저장한 결과 파일을 파일 탐색기(Finder)에서 선택된 상태로 보여 준다 */
 ipcMain.handle('shell:showItemInFolder', (event, filePath) => {
+  assertTrustedSender(event, mainWindow);
   if (typeof filePath === 'string' && filePath) shell.showItemInFolder(filePath);
   return true;
 });
@@ -101,6 +105,7 @@ ipcMain.handle('shell:showItemInFolder', (event, filePath) => {
  * 반환: 선택된 폴더 경로 (취소 시 null)
  */
 ipcMain.handle('dialog:selectFolder', async (event, args = {}) => {
+  assertTrustedSender(event, mainWindow);
   const { title = '폴더 선택', defaultPath = '' } = args;
 
   const result = await dialog.showOpenDialog(mainWindow, {

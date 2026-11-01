@@ -12,7 +12,10 @@ const flog = (m) => {
   fs.appendFileSync(LOG_FILE, m + '\n');
   console.log(m);
 };
-process.on('unhandledRejection', (e) => flog('UNHANDLED REJECTION: ' + (e && e.stack ? e.stack : e)));
+process.on('unhandledRejection', (e) => {
+  flog('UNHANDLED REJECTION: ' + (e && e.stack ? e.stack : e));
+  app.exit(1);
+});
 
 const openFileQueue = [];
 const saveFileQueue = [];
@@ -28,9 +31,12 @@ ipcMain.handle('dialog:selectFolder', async () => selectFolderQueue.shift() || n
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function run() {
-  const win = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true, contextIsolation: false } });
+  const win = new BrowserWindow({
+    show: false,
+    webPreferences: { ...require('../../app-security').webPreferences(), preload: path.join(__dirname, 'test-preload.js') },
+  });
   await win.loadFile(path.join(REPO, 'index.html'));
-  const js = (code) => win.webContents.executeJavaScript(code);
+  const js = (code) => win.webContents.executeJavaScriptInIsolatedWorld(999, [{ code }]);
 
   const results = [];
   const record = (name, ok, detail) => {
@@ -44,15 +50,7 @@ async function run() {
   const staff = path.join(FIX, 'staff.hwpx');
 
   /* ---------- 1. 표 파싱 자체 (공통 모듈 직접 호출) ---------- */
-  const parsed = await js(`(() => {
-    const common = require(${JSON.stringify(path.join(REPO, 'common.js'))});
-    const XLSX = require(${JSON.stringify(path.join(REPO, 'node_modules', 'xlsx'))});
-    const wb = common.readWorkbookSmart(${JSON.stringify(staff)});
-    const sheets = {};
-    wb.SheetNames.forEach((n) => { sheets[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '' }); });
-    const approvalObjects = XLSX.utils.sheet_to_json(wb.Sheets['표 1'], { defval: '' });
-    return { names: wb.SheetNames, preferred: wb.preferredSheetName, sheets, approvalObjects };
-  })()`);
+  const parsed = await js(`window.__testReadWorkbook(${JSON.stringify(staff)})`);
 
   record('표 4개 인식 (빈 표 제외, 중첩 표 포함, 문서 순서)', JSON.stringify(parsed.names) === JSON.stringify(['표 1', '표 2', '표 3', '표 4']), JSON.stringify(parsed.names));
   record('행이 가장 많은 데이터 표(표 2)를 기본 선택으로 제안', parsed.preferred === '표 2', parsed.preferred);
