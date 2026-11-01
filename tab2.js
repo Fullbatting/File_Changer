@@ -372,7 +372,10 @@ function renderVarForm() {
     wrap.className = 'var-field';
 
     const label = document.createElement('label');
-    label.innerHTML = `<span class="tag">{{${varName}}}</span>`;
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = `{{${varName}}}`;
+    label.appendChild(tag);
     wrap.appendChild(label);
 
     const input = document.createElement('input');

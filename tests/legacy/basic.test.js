@@ -47,8 +47,9 @@ function sleep(ms) {
 async function run() {
   win = new BrowserWindow({
     show: false,
-    webPreferences: { nodeIntegration: true, contextIsolation: false },
+    webPreferences: require('../../app-security').webPreferences(),
   });
+  const js = (code) => win.webContents.executeJavaScriptInIsolatedWorld(999, [{ code }]);
   flog('BrowserWindow created, loading index.html...');
   await win.loadFile(path.join(REPO, 'index.html'));
   flog('index.html loaded');
@@ -70,7 +71,7 @@ async function run() {
 
   // 네이티브 alert()/confirm()은 자동화 환경에서 클릭할 수 없어 렌더러를 영원히
   // 멈추게 하므로, 테스트 중에는 가짜로 교체해 둔다 (실제 앱 동작에는 영향 없음).
-  await win.webContents.executeJavaScript(`
+  await js(`
     window.alert = (msg) => { window.__lastAlert = msg; };
     window.confirm = (msg) => { window.__lastConfirm = msg; return true; };
     true;
@@ -80,28 +81,28 @@ async function run() {
   await sleep(500); // let the app boot (userDataPath IPC roundtrip + synonym dict load)
   flog('CP2: sleep done');
 
-  const logText = await win.webContents.executeJavaScript("document.getElementById('logArea').value");
+  const logText = await js("document.getElementById('logArea').value");
   flog('CP3: logText read done, len=' + logText.length);
   record('앱 로드 및 초기 로그에 "준비" 메시지', logText.includes('프로그램이 준비되었습니다'), logText.slice(-200));
 
   /* ---------------- TAB 1: analyze -> required -> convert -> review -> save ---------------- */
 
   openFileQueue.push([path.join(FIX, 'sourceA.xlsx')]);
-  await win.webContents.executeJavaScript("document.getElementById('dropA').click()");
+  await js("document.getElementById('dropA').click()");
   await sleep(200);
 
   openFileQueue.push([path.join(FIX, 'targetB.xlsx')]);
-  await win.webContents.executeJavaScript("document.getElementById('dropB').click()");
+  await js("document.getElementById('dropB').click()");
   await sleep(200);
 
-  await win.webContents.executeJavaScript("document.getElementById('btnAnalyze').click()");
+  await js("document.getElementById('btnAnalyze').click()");
   await sleep(200);
 
-  const analyzeStatus = await win.webContents.executeJavaScript("document.getElementById('analyzeStatus').textContent");
+  const analyzeStatus = await js("document.getElementById('analyzeStatus').textContent");
   record('탭1 구조 분석 완료', analyzeStatus === '분석 완료', analyzeStatus);
 
   // 자동 매핑 확인: 성명<-이름(동의어), 생일<-생년월일(동의어), 연락처<-전화번호(동의어), 이메일<-이메일주소(fuzzy/동의어)
-  const mappingSnapshot = await win.webContents.executeJavaScript(`
+  const mappingSnapshot = await js(`
     Array.from(document.querySelectorAll('#mappingTableBody select')).map(s => [s.dataset.bcolumn, s.value])
   `);
   const mappingObj = Object.fromEntries(mappingSnapshot);
@@ -110,7 +111,7 @@ async function run() {
   record('탭1 동의어 기반 자동 매핑 (성명/생일/연락처/이메일)', autoMapOk, JSON.stringify(mappingObj));
 
   // 매핑 테이블의 "미리보기" 칸에 실제 원본(A) 데이터 값이 표시되는지 확인
-  const previewCells = await win.webContents.executeJavaScript(`
+  const previewCells = await js(`
     Array.from(document.querySelectorAll('#mappingTableBody tr')).map(tr => {
       const b = tr.querySelector('td');
       const preview = tr.querySelector('.mapping-preview-cell');
@@ -125,13 +126,13 @@ async function run() {
   );
 
   // 헤더 자동 감지: targetB의 1행은 제목행이므로 건너뛰었는지 로그로 확인
-  const logAfterAnalyze = await win.webContents.executeJavaScript("document.getElementById('logArea').value");
+  const logAfterAnalyze = await js("document.getElementById('logArea').value");
   // 타겟(B) 1행 "2026년 명단"은 건너뛰고 2행을 헤더로 — ①단계 인식 결과와 로그에 표시된다
-  const recogB = await win.webContents.executeJavaScript("Array.from(document.querySelectorAll('#recogB li')).map((li) => li.textContent)");
+  const recogB = await js("Array.from(document.querySelectorAll('#recogB li')).map((li) => li.textContent)");
   record('탭1 제목행 건너뛰고 헤더 자동 감지', logAfterAnalyze.includes('타겟(B) 파일: 헤더 위 1개 행은 건너뜀: 1행 "2026년 명단"') && recogB[0] === '헤더: 2행(자동)', JSON.stringify(recogB));
 
   // "비고" 컬럼을 필수로 체크 (매핑 안 된 컬럼 -> 변환 후 빈 값 -> 검증에서 "필수 컬럼 비어있음" 경고가 떠야 함)
-  await win.webContents.executeJavaScript(`
+  await js(`
     (() => {
       const cb = document.querySelector('#mappingTableBody input[type=checkbox][data-bcolumn="비고"]');
       cb.checked = true;
@@ -141,16 +142,16 @@ async function run() {
 
   const convertedSavePath = path.join(FIX, 'converted_result.xlsx');
   saveFileQueue.push(convertedSavePath);
-  await win.webContents.executeJavaScript("document.getElementById('btnConvert').click()");
+  await js("document.getElementById('btnConvert').click()");
   await sleep(300);
 
-  const reviewModalVisible = await win.webContents.executeJavaScript("document.getElementById('convertReviewModal').hidden === false");
+  const reviewModalVisible = await js("document.getElementById('convertReviewModal').hidden === false");
   record('탭1 변환 결과 확인 모달 표시', reviewModalVisible, '');
 
-  const reviewSummary = await win.webContents.executeJavaScript("document.getElementById('convertReviewSummary').innerHTML");
+  const reviewSummary = await js("document.getElementById('convertReviewSummary').innerHTML");
   record('탭1 리뷰 모달에 필수컬럼 누락 경고 표시 ("비고")', reviewSummary.includes('비고'), reviewSummary);
 
-  await win.webContents.executeJavaScript("document.getElementById('convertReviewProceed').click()");
+  await js("document.getElementById('convertReviewProceed').click()");
   // 저장은 임시 파일에 쓰고 다시 열어 확인(별도 프로세스)한 뒤 원래 이름으로 바꾸므로 파일이 생길 때까지 기다린다
   for (let i = 0; i < 150 && !fs.existsSync(convertedSavePath); i++) await sleep(100);
   await sleep(100);
@@ -167,32 +168,32 @@ async function run() {
   }
 
   // 프리셋 저장: 프리셋 이름 모달은 showPresetNameModal()의 onclick 핸들러로 뜨므로, 버튼 클릭 후 입력값을 채우고 저장 클릭
-  await win.webContents.executeJavaScript("document.getElementById('btnSavePreset').click()");
+  await js("document.getElementById('btnSavePreset').click()");
   await sleep(200);
-  await win.webContents.executeJavaScript(`
+  await js(`
     document.getElementById('presetNameInput').value = '테스트프리셋';
     document.getElementById('presetModalSave').click();
   `);
   await sleep(200);
-  const presetOptionCount = await win.webContents.executeJavaScript("document.getElementById('presetSelect').options.length");
+  const presetOptionCount = await js("document.getElementById('presetSelect').options.length");
   record('탭1 프리셋 저장 후 드롭다운에 추가됨', presetOptionCount >= 2, String(presetOptionCount));
 
   /* ---------------- TAB 2: manual mode (docx) ---------------- */
 
-  await win.webContents.executeJavaScript(`document.querySelector('.tab-btn[data-tab="tab2"]').click()`);
+  await js(`document.querySelector('.tab-btn[data-tab="tab2"]').click()`);
   await sleep(100);
 
   openFileQueue.push([path.join(FIX, 'template.docx')]);
-  await win.webContents.executeJavaScript("document.getElementById('dropTemplate').click()");
+  await js("document.getElementById('dropTemplate').click()");
   await sleep(200);
 
-  await win.webContents.executeJavaScript("document.getElementById('btnExtractVars').click()");
+  await js("document.getElementById('btnExtractVars').click()");
   await sleep(200);
 
-  const extractStatus = await win.webContents.executeJavaScript("document.getElementById('extractStatus').textContent");
+  const extractStatus = await js("document.getElementById('extractStatus').textContent");
   record('탭2 템플릿 변수 추출 (docx)', extractStatus.includes('2개 변수') || extractStatus.includes('변수 발견'), extractStatus);
 
-  await win.webContents.executeJavaScript(`
+  await js(`
     document.querySelectorAll('#varFormGrid input').forEach(inp => {
       inp.value = inp.dataset.varName === '이름' ? '테스트유저' : '2026-10-17';
       inp.dispatchEvent(new Event('input'));
@@ -201,7 +202,7 @@ async function run() {
 
   const manualSavePath = path.join(FIX, 'manual_result.docx');
   saveFileQueue.push(manualSavePath);
-  await win.webContents.executeJavaScript("document.getElementById('btnGenerateDocx').click()");
+  await js("document.getElementById('btnGenerateDocx').click()");
   await sleep(300);
 
   const manualExists = fs.existsSync(manualSavePath);
@@ -216,28 +217,28 @@ async function run() {
 
   /* ---------------- TAB 2: batch mode ---------------- */
 
-  await win.webContents.executeJavaScript(`
+  await js(`
     document.querySelector('input[name="mmMode"][value="batch"]').click();
   `);
   await sleep(100);
 
   openFileQueue.push([path.join(FIX, 'mmData.xlsx')]);
-  await win.webContents.executeJavaScript("document.getElementById('dropMailMergeData').click()");
+  await js("document.getElementById('dropMailMergeData').click()");
   await sleep(200);
 
-  await win.webContents.executeJavaScript("document.getElementById('btnLoadMailMergeData').click()");
+  await js("document.getElementById('btnLoadMailMergeData').click()");
   await sleep(200);
 
-  const mmStatus = await win.webContents.executeJavaScript("document.getElementById('mailMergeDataStatus').textContent");
+  const mmStatus = await js("document.getElementById('mailMergeDataStatus').textContent");
   record('탭2 배치 데이터 불러오기', mmStatus.includes('2행'), mmStatus);
 
-  const mmMapping = await win.webContents.executeJavaScript(`
+  const mmMapping = await js(`
     Array.from(document.querySelectorAll('#mailMergeMappingTableBody select')).map(s => [s.dataset.templateVar, s.value])
   `);
   const mmMappingOk = mmMapping.some(([v, c]) => v === '이름' && c === '이름') && mmMapping.some(([v, c]) => v === '날짜' && c === '날짜');
   record('탭2 배치 변수<->컬럼 자동 매핑 (exact)', mmMappingOk, JSON.stringify(mmMapping));
 
-  const mmPreviewCells = await win.webContents.executeJavaScript(`
+  const mmPreviewCells = await js(`
     Array.from(document.querySelectorAll('#mailMergeMappingTableBody tr')).map(tr => {
       const varCell = tr.querySelector('td');
       const preview = tr.querySelector('.mapping-preview-cell');
@@ -252,13 +253,13 @@ async function run() {
   );
 
   selectFolderQueue.push(batchOutDir);
-  await win.webContents.executeJavaScript("document.getElementById('btnGenerateBatch').click()");
+  await js("document.getElementById('btnGenerateBatch').click()");
   await sleep(300);
 
-  const batchReviewVisible = await win.webContents.executeJavaScript("document.getElementById('mailMergeReviewModal').hidden === false");
+  const batchReviewVisible = await js("document.getElementById('mailMergeReviewModal').hidden === false");
   record('탭2 배치 생성 확인 모달 표시', batchReviewVisible, '');
 
-  await win.webContents.executeJavaScript("document.getElementById('mailMergeReviewProceed').click()");
+  await js("document.getElementById('mailMergeReviewProceed').click()");
   await sleep(500);
 
   const batchFiles = fs.readdirSync(batchOutDir).filter((f) => f.endsWith('.docx'));
@@ -274,15 +275,15 @@ async function run() {
 
   /* ---------------- 동의어 사전 모달 ---------------- */
 
-  await win.webContents.executeJavaScript(`document.querySelector('.tab-btn[data-tab="tab1"]').click()`);
+  await js(`document.querySelector('.tab-btn[data-tab="tab1"]').click()`);
   await sleep(100);
-  await win.webContents.executeJavaScript("document.getElementById('btnManageSynonymsTab1').click()");
+  await js("document.getElementById('btnManageSynonymsTab1').click()");
   await sleep(100);
-  const synonymModalVisible = await win.webContents.executeJavaScript("document.getElementById('synonymManagerModal').hidden === false");
+  const synonymModalVisible = await js("document.getElementById('synonymManagerModal').hidden === false");
   record('동의어 사전 관리 모달 열림 (탭1 버튼)', synonymModalVisible, '');
-  const synonymTextHasDefault = await win.webContents.executeJavaScript("document.getElementById('synonymGroupsTextarea').value.includes('이름, 성명, 성함')");
+  const synonymTextHasDefault = await js("document.getElementById('synonymGroupsTextarea').value.includes('이름, 성명, 성함')");
   record('동의어 사전 기본값 로드됨', synonymTextHasDefault, '');
-  await win.webContents.executeJavaScript("document.getElementById('synonymManagerCancel').click()");
+  await js("document.getElementById('synonymManagerCancel').click()");
 
   /* ---------------- 콘솔 에러 체크 ---------------- */
   record('렌더러 콘솔 에러 없음', rendererErrors.length === 0, JSON.stringify(rendererErrors));
