@@ -1,6 +1,6 @@
 // common.js
-// 탭1(문서 양식 변환기)/탭2(메일머지)가 공통으로 쓰는 유틸·캐시·동의어 사전·
-// 헤더 자동 감지·컬럼 자동 매핑 로직. 두 탭 모두 이 모듈을 require 하여 쓴다.
+// 메일머지 자동기입(tab2.js)이 쓰는 공통 유틸·캐시·파일 읽기(데이터 파일·한글 문서 표)·
+// 동의어 사전·변수 자동 매핑 연결부.
 
 const { ipcRenderer, webUtils } = require('electron');
 const fs = require('fs');
@@ -10,7 +10,6 @@ const PizZip = require('pizzip');
 const { readHwpTables, cellsToRows } = require('./hwp-reader.js');
 const tableReader = require('./table-reader.js');
 const autoMatch = require('./auto-match.js');
-const { normalizeFieldName, levenshteinDistance, decomposeHangulToJamo, getChoseong } = autoMatch;
 const { formatPreviewValue } = tableReader;
 
 /* =========================================================================
@@ -105,9 +104,7 @@ function evictOldestIfFull(map, limit) {
 /**
  * "진행 / 취소" 형태의 확인 모달 공통 열기/닫기 로직. 모달을 보이고, 진행·취소
  * 버튼 클릭 또는 배경(오버레이) 클릭(취소로 처리)에 따라 true/false를 Promise로
- * 반환한다. 탭1의 변환 결과 확인 모달과 탭2의 일괄 생성 확인 모달이 이 구조를
- * 그대로 공유하므로 여기만 한 번 구현한다 — 모달에 채울 내용(요약/미리보기
- * 테이블)을 만드는 로직은 서로 달라 호출하는 쪽에 남겨둔다.
+ * 반환한다. 모달에 채울 내용(요약/미리보기 테이블)을 만드는 로직은 호출하는 쪽에 둔다.
  */
 function confirmModal(modalEl, proceedBtn, cancelBtn) {
   return new Promise((resolve) => {
@@ -131,48 +128,6 @@ function confirmModal(modalEl, proceedBtn, cancelBtn) {
     modalEl.onclick = (e) => {
       if (e.target === modalEl) cancelBtn.click();
     };
-  });
-}
-
-/**
- * 앱 안의 확인 창(index.html의 #appConfirmModal). 네이티브 confirm()과 달리 제목·설명·
- * 목록을 보여줄 수 있고 화면 스타일과 같다. 내용은 모두 textContent로 넣는다.
- * { title, message, items: [문자열], note, okText, cancelText, danger } → Promise<boolean>
- */
-function showConfirmDialog({ title, message, items = [], note = '', okText = '확인', cancelText = '취소', danger = false }) {
-  const modalEl = document.getElementById('appConfirmModal');
-  const okBtn = document.getElementById('appConfirmOk');
-  const cancelBtn = document.getElementById('appConfirmCancel');
-  document.getElementById('appConfirmTitle').textContent = title || '';
-  document.getElementById('appConfirmMessage').textContent = message || '';
-  const list = document.getElementById('appConfirmItems');
-  list.innerHTML = '';
-  items.forEach((text) => {
-    const li = document.createElement('li');
-    li.textContent = text;
-    list.appendChild(li);
-  });
-  list.hidden = items.length === 0;
-  const noteEl = document.getElementById('appConfirmNote');
-  noteEl.textContent = note;
-  noteEl.hidden = !note;
-  okBtn.textContent = okText;
-  cancelBtn.textContent = cancelText;
-  okBtn.classList.toggle('danger', danger);
-  okBtn.classList.toggle('primary', !danger);
-
-  const onKey = (e) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      cancelBtn.click();
-    }
-  };
-  document.addEventListener('keydown', onKey, true);
-  const result = confirmModal(modalEl, okBtn, cancelBtn);
-  okBtn.focus();
-  return result.then((ok) => {
-    document.removeEventListener('keydown', onKey, true);
-    return ok;
   });
 }
 
@@ -376,16 +331,6 @@ document.getElementById('btnClearLog').addEventListener('click', () => {
   logArea.value = '';
 });
 
-// 탭 전환
-document.querySelectorAll('.tab-btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById(btn.dataset.tab).classList.add('active');
-  });
-});
-
 // 표 형태 데이터 파일: xlsx와 매크로 포함 버전(xlsm)은 zip+XML 구조가 동일해 xlsx 파서로 함께 읽히고,
 // 한글 문서(hwpx/hwp)와 그 서식 파일(hwpt)은 문서 안의 표를 시트처럼 읽는다
 const DATA_FILE_FILTERS = [
@@ -409,10 +354,6 @@ const TEMPLATE_FILTERS = [
   { name: 'All Files', extensions: ['*'] },
 ];
 
-const JSON_FILTERS = [
-  { name: 'JSON Files', extensions: ['json'] },
-  { name: 'All Files', extensions: ['*'] },
-];
 
 /**
  * 드롭존(클릭 + 드래그앤드롭) 공통 바인딩
@@ -462,10 +403,7 @@ function bindDropzone(zoneEl, fileNameEl, filters, onFileSelected) {
 /**
  * 파일 선택 직후의 최초 시트 반영은 onChange로, 사용자가 드롭다운에서 직접
  * 시트를 바꿀 때의 후속 처리(상태 초기화 등)는 onUserChangedSheet으로 분리
- * 되어 있다. 탭1(A/B 파일)과 탭2(메일머지 데이터 파일)가 이 함수를 공유하므로,
- * '시트를 바꾸면 무엇을 초기화할지'는 호출하는 쪽의 책임으로 둬야 한다 —
- * 그렇지 않으면 탭2에서 시트를 바꿨는데 탭1의 매핑/프리셋이 초기화되는 식의
- * 엉뚱한 부작용이 생긴다.
+ * 되어 있다. '시트를 바꾸면 무엇을 초기화할지'는 호출하는 쪽의 책임이다.
  */
 function refreshSheetSelector(filePath, sheetRowEl, sheetSelectEl, onChange, onUserChangedSheet) {
   try {
@@ -528,137 +466,12 @@ function readSheetTable(filePath, sheetName, { displayText = false, headerRowInd
   return table;
 }
 
-/** 헤더 정보만 필요할 때: { headers, labels, headerRowIndex, report, fileInfo } */
-function extractHeaders(filePath, sheetName, options) {
-  const { headers, labels, headerRowIndex, report, fileInfo } = readSheetTable(filePath, sheetName, options);
-  return { headers, labels, headerRowIndex, report, fileInfo };
-}
-
 /* -------------------------------------------------------------------------
  * 컬럼 이름 자동 연결은 auto-match.js(순수 함수). 여기서는 사용자 동의어 사전을 넣어 부른다.
- * 여러 타겟 컬럼을 한꺼번에 정할 때는 순서에 따라 결과가 달라지지 않도록 autoMatchAll을 쓴다.
+ * 템플릿 변수를 한꺼번에 정하므로 순서에 따라 결과가 달라지지 않도록 autoMatchAll을 쓴다.
  * ------------------------------------------------------------------------- */
 
-const findAutoMatch = (bCol, headersA, usedHeadersA) => autoMatch.findAutoMatch(bCol, headersA, usedHeadersA, synonymGroups);
 const autoMatchAll = (headersB, headersA) => autoMatch.autoMatchAll(headersB, headersA, synonymGroups);
-
-/* -------------------------------------------------------------------------
- * 원본 컬럼 고르기 도우미 (매핑 작업대의 검색·추천)
- * 컬럼이 수십 개일 때 원하는 컬럼을 빨리 찾도록, 이름·초성·값으로 찾고 "이름이
- * 비슷한 정도 + 값 모양"으로 추천 순서를 매긴다. AI 없이 규칙으로만 계산한다.
- * ------------------------------------------------------------------------- */
-
-
-/**
- * 컬럼 하나가 검색어에 맞는지: 이름에 포함 / 검색어가 초성만으로 되어 있으면 이름의
- * 초성에 포함 / 값(values, 앞 몇 행) 중 하나에 포함.
- */
-function matchesColumnSearch(query, name, values) {
-  const q = normalizeFieldName(query || '');
-  if (!q) return true;
-  const nameNorm = normalizeFieldName(name);
-  if (nameNorm.includes(q)) return true;
-  if (/^[ㄱ-ㅎ]+$/.test(q) && getChoseong(nameNorm).includes(q)) return true;
-  const raw = String(query).trim().toLowerCase();
-  return (values || []).some((v) => formatPreviewValue(v).toLowerCase().includes(raw));
-}
-
-const VALUE_KIND_LABELS = {
-  phone: '전화번호',
-  email: '메일 주소',
-  date: '날짜',
-  rrn: '주민번호',
-  zip: '우편번호',
-  number: '숫자',
-};
-
-function classifyValue(v) {
-  if (v instanceof Date) return 'date';
-  if (typeof v === 'number') return Number.isFinite(v) ? 'number' : null;
-  const s = String(v).trim();
-  if (/^\d{4}[-./]\d{1,2}[-./]\d{1,2}/.test(s)) return 'date';
-  if (/^\d{6}-?[1-4*][\d*]{0,6}$/.test(s) && s.length >= 8) return 'rrn';
-  if (/^0\d{1,2}-?\d{3,4}-?\d{4}$/.test(s)) return 'phone';
-  if (/^[^@\s]+@[^@\s]+$/.test(s)) return 'email';
-  if (/^\d{5}$/.test(s)) return 'zip';
-  if (/^-?[\d,]+(\.\d+)?$/.test(s)) return 'number';
-  return null;
-}
-
-/** 값 목록(앞 몇 행)의 모양을 추정한다. 빈 값을 뺀 80% 이상이 같은 모양일 때만 그 종류를 돌려준다 */
-function detectValueKind(values) {
-  const nonEmpty = (values || []).filter((v) => v !== '' && v !== null && v !== undefined).slice(0, 20);
-  if (nonEmpty.length === 0) return null;
-  const counts = {};
-  nonEmpty.forEach((v) => {
-    const k = classifyValue(v);
-    if (k) counts[k] = (counts[k] || 0) + 1;
-  });
-  const best = Object.entries(counts).sort((x, y) => y[1] - x[1])[0];
-  return best && best[1] / nonEmpty.length >= 0.8 ? best[0] : null;
-}
-
-/** 타겟 컬럼 이름에서 들어갈 값의 종류를 추정한다("연락처" → 전화번호) */
-function guessKindFromName(name) {
-  const n = normalizeFieldName(name);
-  if (/주민/.test(n)) return 'rrn';
-  if (/(연락처|전화|휴대|핸드폰|폰|tel|phone|mobile)/.test(n)) return 'phone';
-  if (/(메일|email|e-mail|전자우편)/.test(n)) return 'email';
-  if (/우편/.test(n)) return 'zip';
-  if (/(일자|날짜|생년월일|생일|일시|date)$|일$/.test(n)) return 'date';
-  if (/(금액|급여|수당|급$|액$|료$|비$|수량|점수|단가|가격|합계|price|amount|qty)/.test(n)) return 'number';
-  return null;
-}
-
-/**
- * bName(타겟 컬럼)에 연결할 원본 컬럼 후보를 점수순으로 돌려준다: [{ a, score, reasons }].
- * - 이름: 같음 100 · 동의어 90 · 한쪽이 다른 쪽을 포함 55 · 비슷함(음절/자모 유사도 0.5 이상) 최대 60
- * - 값 모양: 타겟 이름에서 추정한 종류와 원본 값의 종류가 같으면 +40
- * valueKindByA: { [원본 컬럼]: detectValueKind 결과 }. 점수가 0인 후보는 뺀다. 동점이면 원본 순서.
- */
-function rankSourceCandidates(bName, headersA, valueKindByA = {}) {
-  const bNorm = normalizeFieldName(bName);
-  const bJamo = decomposeHangulToJamo(bNorm);
-  const bKind = guessKindFromName(bName);
-  const group = synonymGroups.find((g) => g.some((term) => normalizeFieldName(term) === bNorm));
-  const groupNormSet = group ? new Set(group.map(normalizeFieldName)) : null;
-
-  return headersA
-    .map((a, index) => {
-      const aNorm = normalizeFieldName(a);
-      const reasons = [];
-      let score = 0;
-      if (aNorm === bNorm) {
-        score = 100;
-        reasons.push('이름 같음');
-      } else if (groupNormSet && groupNormSet.has(aNorm)) {
-        score = 90;
-        reasons.push('동의어');
-      } else if (aNorm.length >= 2 && bNorm.length >= 2 && (aNorm.includes(bNorm) || bNorm.includes(aNorm))) {
-        score = 55;
-        reasons.push('이름 일부 같음');
-      } else {
-        const aJamo = decomposeHangulToJamo(aNorm);
-        const sim = Math.max(
-          1 - levenshteinDistance(aNorm, bNorm) / Math.max(aNorm.length, bNorm.length, 1),
-          1 - levenshteinDistance(aJamo, bJamo) / Math.max(aJamo.length, bJamo.length, 1)
-        );
-        if (sim >= 0.5) {
-          score = Math.round(sim * 60);
-          reasons.push('이름 비슷');
-        }
-      }
-      if (bKind && valueKindByA[a] === bKind) {
-        score += 40;
-        reasons.push(`값: ${VALUE_KIND_LABELS[bKind]}`);
-      }
-      return { a, score, reasons, index };
-    })
-    .filter((c) => c.score > 0)
-    .sort((x, y) => y.score - x.score || x.index - y.index)
-    .map(({ a, score, reasons }) => ({ a, score, reasons }));
-}
-
 
 /** XML 텍스트 노드에 안전하게 삽입할 수 있도록 특수문자를 이스케이프 */
 function xmlEscape(str) {
@@ -674,7 +487,7 @@ function xmlEscape(str) {
  * 가장 흔한 사례만큼은 바로 매핑하기 위한 가벼운 대안. 프리셋과 마찬가지로
  * 사용자 데이터 폴더에 저장되어 앱을 다시 실행해도 유지되며, 모달에서
  * "한 줄 = 동의어 한 그룹(쉼표로 구분)" 형태로 직접 편집할 수 있다.
- * 탭1(컬럼 매핑)과 탭2(메일머지 변수 매핑)가 findAutoMatch를 통해 함께 쓴다.
+ * 템플릿 변수 ↔ 데이터 컬럼 자동 매핑(autoMatchAll)이 쓴다.
  * ------------------------------------------------------------------------- */
 
 const SYNONYM_GROUPS_FILE_NAME = 'synonym-groups.json';
@@ -770,46 +583,31 @@ synonymManagerSaveBtn.addEventListener('click', () => {
     synonymGroups = textToSynonymGroups(synonymGroupsTextarea.value);
     saveSynonymGroupsToDisk();
     closeSynonymManagerModal();
-    log(`동의어 사전을 저장했습니다 (${synonymGroups.length}개 그룹). 다음 [구조 분석]/[데이터 불러오기]부터 적용됩니다.`, 'ok');
+    log(`동의어 사전을 저장했습니다 (${synonymGroups.length}개 그룹). 다음 [데이터 불러오기]부터 적용됩니다.`, 'ok');
   } catch (err) {
     synonymManagerError.textContent = friendlyErrorMessage(err);
     synonymManagerError.hidden = false;
   }
 });
 
-[document.getElementById('btnManageSynonymsTab1'), document.getElementById('btnManageSynonymsTab2')].forEach((btn) => {
-  if (btn) btn.addEventListener('click', openSynonymManagerModal);
-});
+document.getElementById('btnManageSynonymsTab2').addEventListener('click', openSynonymManagerModal);
 
 /* -------------------------------------------------------------------------
- * 사용자 데이터 폴더 경로 (프리셋은 탭1, 동의어 사전은 이 모듈이 사용).
- * 값이 준비되기 전에 다른 모듈이 먼저 필요로 할 수 있으므로, 직접 변수를
- * 내보내는 대신 getUserDataPath()/onUserDataPathReady() 접근자로 노출한다
- * — require 시점에 값을 복사해버리는 구조화 할당(destructuring)은 이후
- * 비동기로 채워지는 값을 반영하지 못하기 때문이다.
+ * 사용자 데이터 폴더 경로(동의어 사전 저장 위치). 앱 시작 때 메인 프로세스에서 받아 온다.
  * ------------------------------------------------------------------------- */
 
 let userDataPath = null;
-const userDataPathReadyCallbacks = [];
 
 function getUserDataPath() {
   return userDataPath;
 }
 
-function onUserDataPathReady(callback) {
-  if (userDataPath !== null) callback(userDataPath);
-  else userDataPathReadyCallbacks.push(callback);
-}
-
-// 앱 시작 시 사용자 데이터 폴더 경로를 받아와 동의어 사전을 불러오고,
-// 이를 기다리고 있던 다른 모듈(탭1의 프리셋 로드 등)에도 알린다.
+// 앱 시작 시 사용자 데이터 폴더 경로를 받아와 동의어 사전을 불러온다
 ipcRenderer
   .invoke('app:getUserDataPath')
   .then((p) => {
     userDataPath = p;
     loadSynonymGroupsFromDisk();
-    userDataPathReadyCallbacks.forEach((cb) => cb(p));
-    userDataPathReadyCallbacks.length = 0;
   })
   .catch((err) => {
     log(`앱 데이터 폴더 경로를 확인하지 못했습니다: ${friendlyErrorMessage(err)}`, 'warn');
@@ -824,34 +622,17 @@ module.exports = {
   getFileMtimeMs,
   evictOldestIfFull,
   confirmModal,
-  showConfirmDialog,
   readWorkbookSmart,
   getHwpxSectionNames,
   DATA_FILE_FILTERS,
   DOCX_FILTERS,
   HWPX_FILTERS,
   TEMPLATE_FILTERS,
-  JSON_FILTERS,
   bindDropzone,
   refreshSheetSelector,
-  extractHeaders,
   readSheetTable,
   describeRecognition: tableReader.describeRecognition,
-  ENCODING_LABELS: tableReader.ENCODING_LABELS,
-  normalizeFieldName,
-  levenshteinDistance,
-  decomposeHangulToJamo,
-  findAutoMatch,
   autoMatchAll,
-  getSynonymGroups: () => synonymGroups,
-  getChoseong,
-  matchesColumnSearch,
-  detectValueKind,
-  guessKindFromName,
-  rankSourceCandidates,
-  VALUE_KIND_LABELS,
   xmlEscape,
   formatPreviewValue,
-  getUserDataPath,
-  onUserDataPathReady,
 };

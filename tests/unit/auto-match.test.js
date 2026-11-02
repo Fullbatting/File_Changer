@@ -3,7 +3,24 @@
 
 const assert = require('assert');
 const m = require('../../auto-match.js');
-const { MANY_TARGET, MANY_SOURCE } = require('../e2e/fixtures.js');
+
+// 컬럼이 많은 경우(같은 이름·동의어·비슷한 이름·연결 없음이 섞임)
+/** 원본 52열 × 타겟 41열. 같은 이름 28 · 동의어 5 · 비슷한 이름 4 · 연결 없음 4(그중 "주소"는 후보 2개가 동률) */
+const MANY_FIELDS = Array.from({ length: 27 }, (_, i) => `필드${String(i + 1).padStart(2, '0')}`);
+const MANY_TARGET = [
+  '성명', '사번', '생일', '이메일', '소속', '직위',
+  ...MANY_FIELDS,
+  '입사일자', '직책수당', '주민번호', '계좌번호',
+  '연락처', '국민연금', '주소', '비고',
+];
+const MANY_SOURCE = [
+  '이름', '사번', '생년월일', '이메일주소', '부서', '직급',
+  ...MANY_FIELDS,
+  '입사일', '직급수당', '주민등록번호', '급여계좌번호',
+  '휴대폰', '비상연락처', '국민연금보험료', '주소1', '주소2',
+  '빈칸1', '빈칸2', '빈칸3', '빈칸4', '빈칸5', '빈칸6',
+  '우편번호', '학력', '병역', 'E-mail',
+];
 
 let passed = 0;
 let failed = 0;

@@ -160,7 +160,7 @@ function readCellValue(cell, displayText, date1904 = false) {
 /**
  * 셀 값을 화면·결과 파일에 보일 글자로 바꾼다. 날짜(Date)는 시·분·초가
  * 전부 0인(순수 날짜) 값은 "YYYY-MM-DD"로, 그 외에는 "YYYY-MM-DD HH:MM:SS"로
- * 표기한다. 탭1의 컬럼 매핑 미리보기와 탭2의 메일머지 변수 치환이 함께 쓴다.
+ * 표기한다. 메일머지 변수 치환과 매핑 미리보기가 쓴다.
  */
 function formatPreviewValue(val) {
   if (val === '' || val === null || val === undefined) return '';

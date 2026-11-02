@@ -12,7 +12,11 @@ const flog = (m) => {
   fs.appendFileSync(LOG_FILE, m + '\n');
   console.log(m);
 };
-process.on('unhandledRejection', (e) => flog('UNHANDLED REJECTION: ' + (e && e.stack ? e.stack : e)));
+process.on('unhandledRejection', (e) => {
+  // 시나리오 중 예외: 기록하고 바로 끝낸다(멈춘 채 시간 초과까지 기다리지 않도록)
+  flog('UNHANDLED REJECTION: ' + (e && e.stack ? e.stack : e));
+  app.exit(2);
+});
 
 const openFileQueue = [];
 const saveFileQueue = [];
@@ -74,62 +78,7 @@ async function run() {
   record('중첩 표: 바깥 셀에는 바깥 글자만', JSON.stringify(parsed.sheets['표 3']) === JSON.stringify([['참고', '메모']]), JSON.stringify(parsed.sheets['표 3']));
   record('중첩 표: 안쪽 표는 별도 표로', JSON.stringify(parsed.sheets['표 4']) === JSON.stringify([['내부표']]), JSON.stringify(parsed.sheets['표 4']));
 
-  /* ---------- 2. 탭1: HWPX(A) -> 엑셀 양식(B) 변환 ---------- */
-  openFileQueue.push([staff]);
-  await js("document.getElementById('dropA').click()");
-  await sleep(300);
-  const selectorState = await js(`({
-    visible: !document.getElementById('sheetRowA').hidden,
-    label: document.querySelector('#sheetRowA label').textContent,
-    value: document.getElementById('sheetSelectA').value,
-  })`);
-  record('탭1 표 선택 UI: 보이고, "표 선택" 라벨, 표 2 기본 선택', selectorState.visible && selectorState.label === '표 선택' && selectorState.value === '표 2', JSON.stringify(selectorState));
-
-  openFileQueue.push([path.join(FIX, 'targetB.xlsx')]);
-  await js("document.getElementById('dropB').click()");
-  await sleep(300);
-  const labelB = await js("document.querySelector('#sheetRowB label').textContent");
-  record('엑셀 파일(B)은 라벨이 "시트 선택" 그대로', labelB === '시트 선택', labelB);
-
-  await js("document.getElementById('btnAnalyze').click()");
-  await sleep(300);
-  const logAfterAnalyze = await js("document.getElementById('logArea').value");
-  const recogA = await js("Array.from(document.querySelectorAll('#recogA li')).map((li) => li.textContent)");
-  record(
-    '2단 헤더 표에서 아래 헤더 행(3행) 자동 감지',
-    logAfterAnalyze.includes('원본(A) 파일: 헤더 위 2개 행은 데이터에서 뺌: 1행 "2026년 하반기 직원 명단", 2행 "이름, 연락처, 부서"') && recogA[0].startsWith('헤더: 3행(자동)'),
-    JSON.stringify(recogA)
-  );
-  const mapping = Object.fromEntries(await js(`Array.from(document.querySelectorAll('#mappingTableBody select')).map(s => [s.dataset.bcolumn, s.value])`));
-  record('탭1 자동 매핑 (성명←이름, 연락처←전화번호, 이메일←이메일)', mapping['성명'] === '이름' && mapping['연락처'] === '전화번호' && mapping['이메일'] === '이메일', JSON.stringify(mapping));
-  const preview = await js(`(() => { const tr = Array.from(document.querySelectorAll('#mappingTableBody tr')).find(t => t.querySelector('td').textContent === '성명'); return tr.querySelector('.mapping-preview-cell').textContent; })()`);
-  record('탭1 미리보기에 한글 표의 실제 값', preview === '홍길동 / 김영희', preview);
-
-  const outPath = path.join(FIX, 'hwpx_converted.xlsx');
-  if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
-  saveFileQueue.push(outPath);
-  await js("document.getElementById('btnConvert').click()");
-  await sleep(300);
-  await js("document.getElementById('convertReviewProceed').click()");
-  // 저장은 임시 파일에 쓰고 다시 열어 확인(별도 프로세스)한 뒤 원래 이름으로 바꾸므로 파일이 생길 때까지 기다린다
-  for (let i = 0; i < 150 && !fs.existsSync(outPath); i++) await sleep(100);
-  await sleep(100);
-  if (fs.existsSync(outPath)) {
-    const XLSX = require(path.join(REPO, 'node_modules', 'xlsx'));
-    const wb = XLSX.readFile(outPath);
-    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
-    const ok =
-      rows.length === 3 &&
-      rows[0]['성명'] === '홍길동' &&
-      rows[1]['이메일'] === 'kim&co@example.com' &&
-      rows[2]['연락처'] === '010-5555-6666';
-    record('탭1 변환 결과 엑셀: 3행, 값 정확', ok, JSON.stringify(rows));
-  } else {
-    record('탭1 변환 결과 엑셀 저장됨', false, await js('window.__lastAlert || ""'));
-  }
-
-  /* ---------- 3. 탭2: HWPX 표를 데이터로 일괄 생성 ---------- */
-  await js(`document.querySelector('.tab-btn[data-tab="tab2"]').click()`);
+  /* ---------- 2. HWPX 표를 데이터로 일괄 생성 ---------- */
   openFileQueue.push([path.join(FIX, 'template.docx')]);
   await js("document.getElementById('dropTemplate').click()");
   await sleep(200);
@@ -142,19 +91,19 @@ async function run() {
   await js("document.getElementById('btnLoadMailMergeData').click()");
   await sleep(300);
   const mmStatus = await js("document.getElementById('mailMergeDataStatus').textContent");
-  record('탭2 한글 표 데이터 불러오기 (3행)', mmStatus === '3행 불러옴', mmStatus);
+  record('한글 표 데이터 불러오기 (3행)', mmStatus === '3행 불러옴', mmStatus);
   selectFolderQueue.push(batchOutDir);
   await js("document.getElementById('btnGenerateBatch').click()");
   await sleep(300);
   await js("document.getElementById('mailMergeReviewProceed').click()");
   await sleep(700);
   const files = fs.readdirSync(batchOutDir).sort();
-  record('탭2 일괄 생성: 3명분 문서', JSON.stringify(files) === JSON.stringify(['김영희.docx', '이철수.docx', '홍길동.docx']), JSON.stringify(files));
+  record('일괄 생성: 3명분 문서', JSON.stringify(files) === JSON.stringify(['김영희.docx', '이철수.docx', '홍길동.docx']), JSON.stringify(files));
 
-  /* ---------- 4. 구형 .hwp 안내 ---------- */
-  await js(`document.querySelector('.tab-btn[data-tab="tab1"]').click(); window.__lastAlert = '';`);
+  /* ---------- 3. 구형 .hwp 안내 (데이터 파일로 고를 때) ---------- */
+  await js(`window.__lastAlert = '';`);
   openFileQueue.push([path.join(FIX, 'legacy.hwp')]);
-  await js("document.getElementById('dropA').click()");
+  await js("document.getElementById('dropMailMergeData').click()");
   await sleep(300);
   const hwpAlert = await js('window.__lastAlert || ""');
   record('.hwp 확장자의 손상된 파일은 올바른 문서가 아니라는 안내', hwpAlert.includes('올바른 한글(.hwp) 문서가 아닙니다'), hwpAlert.replace(/\n/g, ' '));

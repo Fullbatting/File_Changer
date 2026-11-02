@@ -1,5 +1,5 @@
 // tests/legacy/run.js
-// 예전 회귀 시나리오(탭1·탭2 기본 흐름, 한글 HWPX 표·템플릿, 전체 기능 점검 3단계)를 실행한다: npm run test:legacy
+// 예전 회귀 시나리오(기본 흐름, 한글 HWPX 표 데이터·템플릿, 전체 기능 점검 3단계)를 실행한다: npm run test:legacy
 // Linux(화면 없는 서버)에서는 xvfb-run -a npm run test:legacy. 날짜 검사는 한국 시간 기준이다.
 // 테스트용 파일은 실행할 때마다 임시 폴더에 만든다(fixtures-*.js). 시나리오마다 PASS/FAIL 줄과
 // "N/M passed" 요약 줄을 출력하며, FAIL 줄이 없고 요약이 M/M일 때만 성공으로 본다.
@@ -37,7 +37,6 @@ const RUNS = [
     dir: auditDir,
     args: ['3'],
     before: () => {
-      fs.writeFileSync(path.join(auditDir, 'userdata', 'mapping-presets.json'), '{broken');
       fs.writeFileSync(path.join(auditDir, 'userdata', 'synonym-groups.json'), '[[broken');
     },
   },

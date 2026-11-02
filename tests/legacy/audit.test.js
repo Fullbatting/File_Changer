@@ -1,5 +1,5 @@
-// Full feature audit for the Electron app. Usage: electron audit.js <phase 1|2|3>
-// Phase 1: every feature of both tabs. Phase 2: relaunch -> settings persisted. Phase 3: corrupted settings -> recovery.
+// 메일머지 자동기입 전체 기능 점검. 실행: electron audit.test.js <phase 1|2|3> (tests/legacy/run.js가 차례로 실행)
+// Phase 1: every mail-merge feature. Phase 2: relaunch -> settings persisted. Phase 3: corrupted settings -> recovery.
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -17,7 +17,11 @@ const flog = (m) => {
   fs.appendFileSync(LOG, m + '\n');
   console.log(m);
 };
-process.on('unhandledRejection', (e) => flog('UNHANDLED REJECTION: ' + (e && e.stack ? e.stack : e)));
+process.on('unhandledRejection', (e) => {
+  // 시나리오 중 예외: 기록하고 바로 끝낸다(멈춘 채 시간 초과까지 기다리지 않도록)
+  flog('UNHANDLED REJECTION: ' + (e && e.stack ? e.stack : e));
+  app.exit(2);
+});
 
 const q = { open: [], save: [], folder: [] };
 ipcMain.handle('dialog:openFile', async () => q.open.shift() || []);
@@ -51,7 +55,6 @@ app.whenReady().then(async () => {
   const click = async (id, wait = 250) => { await js(`document.getElementById(${JSON.stringify(id)}).click(); true;`); await sleep(wait); };
   const pick = async (dropId, file, wait = 300) => { q.open.push([file]); await click(dropId, wait); };
   const lastAlert = () => js(`window.__alerts[window.__alerts.length - 1] || ''`);
-  const tab = (t) => js(`document.querySelector('.tab-btn[data-tab="${t}"]').click(); true;`);
   const mappingOf = (tbody, attr) => js(`Object.fromEntries(Array.from(document.querySelectorAll('#${tbody} select')).map(s => [s.dataset.${attr}, s.value]))`);
   const readOut = (file) => {
     const wb = XLSX.readFile(file, { cellNF: true });
@@ -67,165 +70,19 @@ app.whenReady().then(async () => {
   };
 
   if (PHASE === '1') {
-    /* ================= TAB 1 ================= */
     check('앱 시작 로그', (await logText()).includes('프로그램이 준비되었습니다'));
-
-    // 드래그앤드롭 (A)
-    // Real drag-and-drop: a genuine disk-backed File (via DevTools DOM.setFileInputFiles), dropped on the zone.
-    await js(`const inp = document.createElement('input'); inp.type = 'file'; inp.id = '__dndProbe'; inp.style.display = 'none'; document.body.appendChild(inp); true;`);
-    win.webContents.debugger.attach('1.3');
-    const { root } = await win.webContents.debugger.sendCommand('DOM.getDocument');
-    const { nodeId } = await win.webContents.debugger.sendCommand('DOM.querySelector', { nodeId: root.nodeId, selector: '#__dndProbe' });
-    await win.webContents.debugger.sendCommand('DOM.setFileInputFiles', { nodeId, files: [fx('source.xlsx')] });
-    win.webContents.debugger.detach();
-    await js(`const f = document.getElementById('__dndProbe').files[0]; const ev = new Event('drop', { bubbles: true, cancelable: true }); Object.defineProperty(ev, 'dataTransfer', { value: { files: [f] } }); document.getElementById('dropA').dispatchEvent(ev); true;`);
-    await sleep(300);
-    const sheetA = await js(`({ name: document.getElementById('fileNameA').textContent, visible: !document.getElementById('sheetRowA').hidden, options: Array.from(document.getElementById('sheetSelectA').options).map(o => o.value), label: document.querySelector('#sheetRowA label').textContent })`);
-    check('드래그앤드롭으로 원본(A) 선택 + 시트 2개 선택 UI', sheetA.name === 'source.xlsx' && sheetA.visible && JSON.stringify(sheetA.options) === '["직원","기타"]' && sheetA.label === '시트 선택', sheetA);
-
-    await pick('dropB', fx('target.xlsx'));
-    await click('btnAnalyze');
-    let mapping = await mappingOf('mappingTableBody', 'bcolumn');
-    const expectedMap = { 성명: '이름', 사번: '사번', 입사릴: '입사일', 급여: '급여', 비율: '비율', 우편번호: '우편번호', 비고: '비고', 비고_1: '비고_1' };
-    check('B2에서 시작하는 표 + 헤더 공백 + 중복 컬럼 + 동의어/오타 자동 매핑', JSON.stringify(mapping) === JSON.stringify(expectedMap), mapping);
-    const log1 = await logText();
-    check('제목 행 건너뛰기 로그 (타겟)', log1.includes('타겟(B) 파일: 헤더 위 1개 행은 건너뜀'), log1.split('\n').filter((l) => l.includes('타겟(B)')).join(' / '));
-    check('중복 컬럼 구분 로그', log1.includes('비고_1(으)로 구분했습니다'));
-    const previews = await js(`Object.fromEntries(Array.from(document.querySelectorAll('#mappingTableBody tr')).map(tr => [tr.querySelector('select').dataset.bcolumn, tr.querySelector('.mapping-preview-cell').textContent]))`);
-    check('미리보기: 날짜는 YYYY-MM-DD(한국 시간대에서도), 앞자리 0 보존, 중복 컬럼은 각자 값', previews['입사릴'] === '2026-01-15 / 2026-02-19 12:00:00' && previews['우편번호'] === '03187 / 04321' && previews['비고'] === '첫째' && previews['비고_1'] === '둘째 / 셋째', previews);
-
-    // 시트 변경 -> 초기화
-    await js(`const s = document.getElementById('sheetSelectA'); s.value = '기타'; s.dispatchEvent(new Event('change')); true;`);
-    await sleep(200);
-    const afterSwitch = await js(`({ status: document.getElementById('analyzeStatus').textContent, rows: document.querySelectorAll('#mappingTableBody select').length })`);
-    check('시트 변경 시 매핑 초기화', afterSwitch.status === '대기 중' && afterSwitch.rows === 0, afterSwitch);
-    await js(`const s = document.getElementById('sheetSelectA'); s.value = '직원'; s.dispatchEvent(new Event('change')); true;`);
-    await click('btnAnalyze');
-
-    // 필수 컬럼 + 변환 확인 모달 취소 -> 저장 안 됨
-    await js(`const cb = document.querySelector('#mappingTableBody input[data-bcolumn="비고"]'); cb.checked = true; cb.dispatchEvent(new Event('change')); true;`);
-    const outTab1 = path.join(OUT, 'converted.xlsx');
-    if (fs.existsSync(outTab1)) fs.unlinkSync(outTab1);
-    await click('btnConvert', 300);
-    const review = await js(`({ visible: !document.getElementById('convertReviewModal').hidden, summary: document.getElementById('convertReviewSummary').textContent, head: Array.from(document.querySelectorAll('#convertReviewTableHead th')).map(t => t.textContent), firstRow: Array.from(document.querySelectorAll('#convertReviewTableBody tr:first-child td')).map(t => t.textContent) })`);
-    check('확인 모달: 필수 컬럼 누락 + 중복 행 감지', review.visible && review.summary.includes('필수 칸 "비고"이(가) 비어 있는 행 1행') && review.summary.includes('모든 값이 같은 중복 행 1행: 5행(3행과 같음)'), review.summary);
-    check('확인 모달: 원래 컬럼 이름 + 날짜 표기', JSON.stringify(review.head) === '["성명","사번","입사릴","급여","비율","우편번호","비고","비고"]' && review.firstRow[2] === '2026-01-15', review);
-    await click('convertReviewCancel');
-    check('확인 모달 취소 시 저장 안 함', !fs.existsSync(outTab1) && (await logText()).includes('확인 단계에서 취소'));
-
-    // 저장 대화상자 취소
-    await click('btnConvert', 300);
-    await click('convertReviewProceed', 300);
-    check('저장 대화상자 취소 처리', !fs.existsSync(outTab1) && (await logText()).includes('저장이 취소되었습니다'));
-
-    // 실제 변환
-    q.save.push(outTab1);
-    await click('btnConvert', 300);
-    await click('convertReviewProceed', 100);
-    // 저장은 임시 파일에 쓰고 다시 열어 확인(별도 프로세스)한 뒤 원래 이름으로 바꾸므로 파일이 생길 때까지 기다린다
-    for (let i = 0; i < 150 && !fs.existsSync(outTab1); i++) await sleep(100);
-    await sleep(100);
-    if (!fs.existsSync(outTab1)) {
-      check('변환 파일 저장', false, await lastAlert());
-    } else {
-      const c = readOut(outTab1);
-      const header = c[0].map((x) => x && x.v);
-      check('결과: 헤더는 원래 이름(중복 비고 포함)', JSON.stringify(header) === '["성명","사번","입사릴","급여","비율","우편번호","비고","비고"]', header);
-      const r1 = c[1];
-      check('결과: 텍스트로 된 사번은 텍스트 유지', r1[1].t === 's' && r1[1].v === '20230001', r1[1]);
-      check('결과: 날짜는 엑셀 날짜 + yyyy-mm-dd (하루 밀림 없음)', r1[2].t === 'n' && r1[2].v === 46037 && /yyyy-mm-dd/.test(r1[2].z || ''), r1[2]);
-      check('결과: 시각 있는 날짜는 시각까지', c[2][2].v === 46072.5 && /hh:mm:ss/.test(c[2][2].z || ''), c[2][2]);
-      check('결과: 급여는 숫자 + 천단위', r1[3].t === 'n' && r1[3].v === 1500000 && r1[3].z === '#,##0', r1[3]);
-      check('결과: 비율은 원본 형식(0%) 유지', r1[4].t === 'n' && r1[4].v === 0.15 && r1[4].z === '0%', r1[4]);
-      check('결과: 우편번호 앞자리 0 보존', r1[5].v === '03187', r1[5]);
-      check('결과: 중복 컬럼이 각자 값', r1[6].v === '첫째' && r1[7].v === '둘째' && c[2][7].v === '셋째', [r1[6], r1[7], c[2][7]]);
-    }
-
-    // 매핑 규칙 JSON 저장 -> 매핑 망가뜨리기 -> 불러오기
-    const ruleFile = path.join(OUT, 'rule.json');
-    q.save.push(ruleFile);
-    await click('btnSaveMapping');
-    const rule = fs.existsSync(ruleFile) ? JSON.parse(fs.readFileSync(ruleFile, 'utf-8')) : null;
-    check('매핑 규칙 JSON 저장 (필수 컬럼 포함)', rule && rule.mapping['성명'] === '이름' && JSON.stringify(rule.requiredColumns) === '["비고"]', rule);
-    await js(`document.querySelectorAll('#mappingTableBody select').forEach(s => { s.value = ''; s.dispatchEvent(new Event('change')); }); true;`);
-    q.open.push([ruleFile]);
-    await click('btnLoadMapping');
-    mapping = await mappingOf('mappingTableBody', 'bcolumn');
-    const reqChecked = await js(`document.querySelector('#mappingTableBody input[data-bcolumn="비고"]').checked`);
-    const prevAfterLoad = await js(`document.querySelector('#mappingTableBody select[data-bcolumn="성명"]').closest('tr').querySelector('.mapping-preview-cell').textContent`);
-    check('매핑 규칙 불러오기 (매핑 + 필수 + 미리보기 갱신)', JSON.stringify(mapping) === JSON.stringify(expectedMap) && reqChecked && prevAfterLoad === '홍길동 / 김영희', { mapping, reqChecked, prevAfterLoad });
-
-    // 프리셋: 저장 -> 망가뜨리기 -> 적용 -> 같은 이름 덮어쓰기 -> 두 번째 저장 -> 삭제
-    const savePreset = async (name) => {
-      await js(`document.getElementById('btnSavePreset').click(); true;`);
-      await sleep(150);
-      await js(`document.getElementById('presetNameInput').value = ${JSON.stringify(name)}; document.getElementById('presetModalSave').click(); true;`);
-      await sleep(200);
-    };
-    await savePreset('직원명부');
-    await js(`document.querySelectorAll('#mappingTableBody select').forEach(s => { s.value = ''; s.dispatchEvent(new Event('change')); }); true;`);
-    const presetId = await js(`Array.from(document.getElementById('presetSelect').options).find(o => o.textContent === '직원명부').value`);
-    await js(`const p = document.getElementById('presetSelect'); p.value = ${JSON.stringify(presetId)}; p.dispatchEvent(new Event('change')); true;`);
-    await sleep(200);
-    mapping = await mappingOf('mappingTableBody', 'bcolumn');
-    check('프리셋 저장 후 적용 시 매핑 복원', JSON.stringify(mapping) === JSON.stringify(expectedMap), mapping);
-    await js(`const p = document.getElementById('presetSelect'); p.value = ''; p.dispatchEvent(new Event('change')); true;`);
-    await savePreset('직원명부');
-    const overwriteAsked = await js(`window.__lastConfirm || ''`);
-    const sameNameCount = await js(`Array.from(document.getElementById('presetSelect').options).filter(o => o.textContent === '직원명부').length`);
-    check('같은 이름 프리셋은 덮어쓰기 확인 후 하나만 유지', overwriteAsked.includes('이미 "직원명부"') && sameNameCount === 1, { overwriteAsked, sameNameCount });
-    await savePreset('삭제할프리셋');
-    const bothExist = await js(`['직원명부', '삭제할프리셋'].every(n => Array.from(document.getElementById('presetSelect').options).some(o => o.textContent === n))`);
-    check('선택된 프리셋이 있을 때 다른 이름으로 저장하면 새 프리셋 (원래 것 유지)', bothExist);
-    await js(`const p = document.getElementById('presetSelect'); p.value = Array.from(p.options).find(o => o.textContent === '삭제할프리셋').value; p.dispatchEvent(new Event('change')); true;`);
-    await sleep(150);
-    await click('btnDeletePreset');
-    const names = await js(`Array.from(document.getElementById('presetSelect').options).map(o => o.textContent)`);
-    check('프리셋 삭제', !names.includes('삭제할프리셋') && names.includes('직원명부'), names);
-
-    // .xls 타겟
-    await pick('dropB', fx('target.xls'));
-    await click('btnAnalyze');
-    mapping = await mappingOf('mappingTableBody', 'bcolumn');
-    check('.xls(구형 엑셀) 타겟 분석', mapping['성명'] === '이름' && mapping['비고_1'] === '비고_1', mapping);
-
-    // CP949 CSV -> 앞자리 0/날짜 글자 보존
-    await pick('dropA', fx('source_cp949.csv'));
-    await pick('dropB', fx('target_csv.xlsx'));
-    await click('btnAnalyze');
-    mapping = await mappingOf('mappingTableBody', 'bcolumn');
-    check('CP949 CSV 한글 헤더 인식 + 자동 매핑', JSON.stringify(mapping) === JSON.stringify({ 성명: '이름', 연락처: '전화번호', 우편번호: '우편번호', 가입일: '가입일' }), mapping);
-    const outCsv = path.join(OUT, 'converted_csv.xlsx');
-    q.save.push(outCsv);
-    await click('btnConvert', 300);
-    await click('convertReviewProceed', 100);
-    // 저장은 임시 파일에 쓰고 다시 열어 확인(별도 프로세스)한 뒤 원래 이름으로 바꾸므로 파일이 생길 때까지 기다린다
-    for (let i = 0; i < 150 && !fs.existsSync(outCsv); i++) await sleep(100);
-    await sleep(100);
-    if (fs.existsSync(outCsv)) {
-      const r = readOut(outCsv)[1].map((x) => x && x.v);
-      // 가입일은 CSV 글자 "2026-01-15"를 날짜로 읽어 엑셀 날짜(일련번호 46037, yyyy-mm-dd)로 저장한다
-      const joined = readOut(outCsv)[1][3];
-      check('CSV 변환: 전화번호/우편번호 앞자리 0은 글자, 가입일은 날짜', JSON.stringify(r) === '["홍길동","01012345678","03187",46037]' && joined && joined.z === 'yyyy-mm-dd', { r, joined });
-    } else check('CSV 변환 저장', false, await lastAlert());
-    await pick('dropA', fx('source_bom.csv'));
-    await click('btnAnalyze');
-    const bomPreview = await js(`document.querySelector('#mappingTableBody select[data-bcolumn="연락처"]').closest('tr').querySelector('.mapping-preview-cell').textContent`);
-    check('UTF-8 BOM CSV', bomPreview === '01055556666', bomPreview);
 
     // 로그 지우기
     await click('btnClearLog', 100);
     check('로그 지우기', (await logText()) === '');
 
     // 동의어 사전: 추가 저장 (2단계에서 유지 확인)
-    await click('btnManageSynonymsTab1', 150);
+    await click('btnManageSynonymsTab2', 150);
     await js(`const t = document.getElementById('synonymGroupsTextarea'); t.value = t.value + '\\n급여, 월급, 봉급'; document.getElementById('synonymManagerSave').click(); true;`);
     await sleep(200);
-    const syn = await js(`require(${JSON.stringify(path.join(REPO, 'common.js'))}).findAutoMatch('월급', ['급여', '이름'], new Set())`);
+    const syn = await js(`require(${JSON.stringify(path.join(REPO, 'common.js'))}).autoMatchAll(['월급'], ['급여', '이름'])['월급']`);
     check('동의어 사전 추가가 즉시 자동 매핑에 반영', syn.match === '급여' && syn.reason === 'synonym', syn);
 
-    /* ================= TAB 2 ================= */
-    await tab('tab2');
     // 직접 입력: .docx (머리글 변수 + 반복 태그 제외)
     await pick('dropTemplate', fx('letter.docx'));
     await click('btnExtractVars');
@@ -334,39 +191,28 @@ app.whenReady().then(async () => {
     const hsec = fs.existsSync(kimHwpx) ? new PizZip(fs.readFileSync(kimHwpx)).file('Contents/section0.xml').asText() : '';
     check('hwpx 일괄: 250개 + 셀 내 줄바꿈은 <hp:lineBreak/>', fs.readdirSync(hwpxDir).length === 250 && hsec.includes('서울시 중구<hp:lineBreak/>0번지 &amp; &lt;본관&gt;'), hsec || fs.readdirSync(hwpxDir).length);
 
-    // 탭2 동의어 버튼도 같은 모달
+    // 동의어 사전 창 다시 열기
     await click('btnManageSynonymsTab2', 150);
-    check('탭2 동의어 사전 버튼', await js(`!document.getElementById('synonymManagerModal').hidden`));
+    check('동의어 사전 버튼', await js(`!document.getElementById('synonymManagerModal').hidden`));
     await click('synonymManagerCancel', 100);
   }
 
   if (PHASE === '2') {
     await sleep(300);
-    const names = await js(`Array.from(document.getElementById('presetSelect').options).map(o => o.textContent)`);
-    check('재시작 후 프리셋 유지', names.includes('직원명부') && !names.includes('삭제할프리셋'), names);
-    await click('btnManageSynonymsTab1', 150);
+    await click('btnManageSynonymsTab2', 150);
     check('재시작 후 동의어 사전 유지', await js(`document.getElementById('synonymGroupsTextarea').value.includes('급여, 월급, 봉급')`));
     // 기본값 복원 버튼
     await click('synonymManagerReset', 100);
     const resetText = await js(`document.getElementById('synonymGroupsTextarea').value`);
     check('동의어 사전 기본값 되돌리기', !resetText.includes('월급') && resetText.includes('이름, 성명, 성함'));
     await click('synonymManagerCancel', 100);
-    // 프리셋 적용 후 변환까지 (재시작 후에도 동작)
-    await pick('dropA', fx('source.xlsx'));
-    await pick('dropB', fx('target.xlsx'));
-    await click('btnAnalyze');
-    await js(`document.querySelectorAll('#mappingTableBody select').forEach(s => { s.value = ''; s.dispatchEvent(new Event('change')); }); const p = document.getElementById('presetSelect'); p.value = Array.from(p.options).find(o => o.textContent === '직원명부').value; p.dispatchEvent(new Event('change')); true;`);
-    await sleep(200);
-    const m = await mappingOf('mappingTableBody', 'bcolumn');
-    check('재시작 후 프리셋 적용', m['성명'] === '이름' && m['비고_1'] === '비고_1', m);
   }
 
   if (PHASE === '3') {
     await sleep(300);
     const log3 = await logText();
-    check('손상된 프리셋 파일 → 경고 후 빈 목록으로 계속', log3.includes('프리셋을 불러오는 중 오류') && (await js(`document.getElementById('presetSelect').options.length`)) === 1, log3);
     check('손상된 동의어 파일 → 경고 후 기본 사전으로 계속', log3.includes('동의어 사전을 불러오는 중 오류'), log3);
-    const syn = await js(`require(${JSON.stringify(path.join(REPO, 'common.js'))}).findAutoMatch('성명', ['이름'], new Set())`);
+    const syn = await js(`require(${JSON.stringify(path.join(REPO, 'common.js'))}).autoMatchAll(['성명'], ['이름'])['성명']`);
     check('손상 복구 후에도 기본 동의어 매핑 동작', syn.match === '이름', syn);
   }
 

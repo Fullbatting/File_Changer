@@ -11,13 +11,17 @@ ipcMain.handle('dialog:saveFile', async () => out);
 ipcMain.handle('app:getUserDataPath', () => fs.mkdtempSync(path.join(os.tmpdir(), 'tpl-')));
 ipcMain.handle('dialog:selectFolder', async () => null);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+process.on('unhandledRejection', (e) => {
+  console.log('UNHANDLED REJECTION: ' + (e && e.stack ? e.stack : e));
+  app.exit(2);
+});
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true, contextIsolation: false } });
   await win.loadFile(path.join(__dirname, '..', '..', 'index.html'));
   const js = (c) => win.webContents.executeJavaScript(c);
   await js('window.alert = (m) => { window.__a = m; }; true;');
   await sleep(300);
-  await js(`document.querySelector('.tab-btn[data-tab="tab2"]').click(); document.getElementById('dropTemplate').click(); true;`);
+  await js(`document.getElementById('dropTemplate').click(); true;`);
   await sleep(300);
   await js(`document.getElementById('btnExtractVars').click(); true;`);
   await sleep(200);
