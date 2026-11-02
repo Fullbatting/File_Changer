@@ -136,7 +136,7 @@ function isDate1904(workbook) {
  *   시각만 있는 셀(일련번호 1 미만)은 "HH:MM" 글자로 돌려준다.
  * - "00000"처럼 앞자리 0을 채워 보이게 한 숫자 셀(우편번호 등)은 보이는 글자 그대로.
  * - displayText면 숫자도 엑셀 화면에 보이는 글자(천 단위 구분·%·통화 기호) 그대로 —
- *   메일머지 문서에는 0.15가 아니라 "15%"가 들어가야 하기 때문이다.
+ *   (화면에 보이는 그대로가 필요한 곳에서 쓴다 — 예: 문서에 0.15가 아니라 "15%"를 넣을 때)
  */
 function readCellValue(cell, displayText, date1904 = false) {
   if (!cell || cell.v === undefined || cell.v === null) return '';
@@ -160,7 +160,7 @@ function readCellValue(cell, displayText, date1904 = false) {
 /**
  * 셀 값을 화면·결과 파일에 보일 글자로 바꾼다. 날짜(Date)는 시·분·초가
  * 전부 0인(순수 날짜) 값은 "YYYY-MM-DD"로, 그 외에는 "YYYY-MM-DD HH:MM:SS"로
- * 표기한다. 탭1의 컬럼 매핑 미리보기와 탭2의 메일머지 변수 치환이 함께 쓴다.
+ * 표기한다. 매핑 작업대의 미리보기와 확인 창이 쓴다.
  */
 function formatPreviewValue(val) {
   if (val === '' || val === null || val === undefined) return '';

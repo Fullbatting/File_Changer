@@ -1,4 +1,4 @@
-/* styles.css - 문서 변환 및 메일머지 자동화 프로그램 */
+/* styles.css - 문서 양식 변환기 */
 
 :root {
   --color-bg: #f4f6f9;
@@ -73,7 +73,7 @@ html, body {
   overflow: hidden;
 }
 
-/* ---------- Header / Tabs ---------- */
+/* ---------- Header ---------- */
 header.app-header {
   padding: 18px 24px 0 24px;
   background: var(--color-panel);
@@ -84,34 +84,6 @@ header.app-header h1 {
   margin: 0 0 14px 0;
   font-size: 19px;
   font-weight: 700;
-}
-
-.tab-bar {
-  display: flex;
-  gap: 4px;
-}
-
-.tab-btn {
-  padding: 10px 20px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-text-muted);
-  border-bottom: 3px solid transparent;
-  transition: all 0.15s ease;
-}
-
-.tab-btn:hover {
-  color: var(--color-primary);
-  background: var(--color-primary-light);
-  border-radius: 8px 8px 0 0;
-}
-
-.tab-btn.active {
-  color: var(--color-primary);
-  border-bottom: 3px solid var(--color-primary);
 }
 
 /* ---------- Main content ---------- */
@@ -341,41 +313,6 @@ table.mapping-table select {
   padding: 14px 4px;
 }
 
-/* ---------- 모드 토글 (메일머지: 직접 입력 / 일괄 생성) ---------- */
-.mode-toggle {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.mode-toggle label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 9px 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  background: #fff;
-  transition: all 0.15s ease;
-}
-
-.mode-toggle label:hover {
-  border-color: var(--color-primary);
-}
-
-.mode-toggle input[type="radio"] {
-  accent-color: var(--color-primary);
-}
-
-.mode-toggle label:has(input[type="radio"]:checked) {
-  border-color: var(--color-primary);
-  background: var(--color-primary-light);
-  color: var(--color-primary-dark);
-}
-
 /* ---------- 프리셋 관리 ---------- */
 .preset-row {
   display: flex;
@@ -512,38 +449,6 @@ table.mapping-table select {
 }
 
 .synonym-textarea:focus {
-  outline: none;
-  border-color: var(--color-primary);
-}
-
-/* ---------- Dynamic form (mail merge variables) ---------- */
-.var-form-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 12px;
-}
-
-.var-field label {
-  display: block;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--color-text-muted);
-  margin-bottom: 4px;
-}
-
-.var-field label .tag {
-  color: var(--color-primary);
-}
-
-.var-field input {
-  width: 100%;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border);
-  font-size: 13px;
-}
-
-.var-field input:focus {
   outline: none;
   border-color: var(--color-primary);
 }

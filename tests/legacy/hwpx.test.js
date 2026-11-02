@@ -16,14 +16,11 @@ process.on('unhandledRejection', (e) => flog('UNHANDLED REJECTION: ' + (e && e.s
 
 const openFileQueue = [];
 const saveFileQueue = [];
-const selectFolderQueue = [];
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hwpx-userdata-'));
-const batchOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hwpx-batchout-'));
 
 ipcMain.handle('dialog:openFile', async () => openFileQueue.shift() || []);
 ipcMain.handle('dialog:saveFile', async () => saveFileQueue.shift() || null);
 ipcMain.handle('app:getUserDataPath', () => userDataDir);
-ipcMain.handle('dialog:selectFolder', async () => selectFolderQueue.shift() || null);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -128,31 +125,8 @@ async function run() {
     record('탭1 변환 결과 엑셀 저장됨', false, await js('window.__lastAlert || ""'));
   }
 
-  /* ---------- 3. 탭2: HWPX 표를 데이터로 일괄 생성 ---------- */
-  await js(`document.querySelector('.tab-btn[data-tab="tab2"]').click()`);
-  openFileQueue.push([path.join(FIX, 'template.docx')]);
-  await js("document.getElementById('dropTemplate').click()");
-  await sleep(200);
-  await js("document.getElementById('btnExtractVars').click()");
-  await sleep(200);
-  await js(`document.querySelector('input[name="mmMode"][value="batch"]').click()`);
-  openFileQueue.push([staff]);
-  await js("document.getElementById('dropMailMergeData').click()");
-  await sleep(300);
-  await js("document.getElementById('btnLoadMailMergeData').click()");
-  await sleep(300);
-  const mmStatus = await js("document.getElementById('mailMergeDataStatus').textContent");
-  record('탭2 한글 표 데이터 불러오기 (3행)', mmStatus === '3행 불러옴', mmStatus);
-  selectFolderQueue.push(batchOutDir);
-  await js("document.getElementById('btnGenerateBatch').click()");
-  await sleep(300);
-  await js("document.getElementById('mailMergeReviewProceed').click()");
-  await sleep(700);
-  const files = fs.readdirSync(batchOutDir).sort();
-  record('탭2 일괄 생성: 3명분 문서', JSON.stringify(files) === JSON.stringify(['김영희.docx', '이철수.docx', '홍길동.docx']), JSON.stringify(files));
-
-  /* ---------- 4. 구형 .hwp 안내 ---------- */
-  await js(`document.querySelector('.tab-btn[data-tab="tab1"]').click(); window.__lastAlert = '';`);
+  /* ---------- 3. 구형 .hwp 안내 ---------- */
+  await js(`window.__lastAlert = '';`);
   openFileQueue.push([path.join(FIX, 'legacy.hwp')]);
   await js("document.getElementById('dropA').click()");
   await sleep(300);

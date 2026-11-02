@@ -84,8 +84,9 @@ ipcMain.handle('dialog:saveFile', async (event, args = {}) => {
 });
 
 /**
- * 앱 사용자 데이터 폴더 경로 반환 (매핑 프리셋 등 앱 내부 데이터 저장용)
+ * 앱 사용자 데이터 폴더 경로 반환 (매핑 프리셋·동의어 사전 저장용)
  * Windows: %APPDATA%/doc-convert-mailmerge, macOS: ~/Library/Application Support/doc-convert-mailmerge
+ * (예전 통합 프로그램과 같은 폴더 이름을 그대로 써서, 저장해 둔 프리셋·동의어 사전을 이어 쓴다)
  */
 ipcMain.handle('app:getUserDataPath', () => app.getPath('userData'));
 
@@ -93,22 +94,4 @@ ipcMain.handle('app:getUserDataPath', () => app.getPath('userData'));
 ipcMain.handle('shell:showItemInFolder', (event, filePath) => {
   if (typeof filePath === 'string' && filePath) shell.showItemInFolder(filePath);
   return true;
-});
-
-/**
- * 폴더 선택 다이얼로그 (메일머지 일괄 생성 결과를 저장할 폴더 선택용)
- * args: { title, defaultPath }
- * 반환: 선택된 폴더 경로 (취소 시 null)
- */
-ipcMain.handle('dialog:selectFolder', async (event, args = {}) => {
-  const { title = '폴더 선택', defaultPath = '' } = args;
-
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title,
-    defaultPath,
-    properties: ['openDirectory', 'createDirectory'],
-  });
-
-  if (result.canceled || result.filePaths.length === 0) return null;
-  return result.filePaths[0];
 });
