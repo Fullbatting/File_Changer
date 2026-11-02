@@ -17,7 +17,11 @@ const flog = (m) => {
   fs.appendFileSync(LOG, m + '\n');
   console.log(m);
 };
-process.on('unhandledRejection', (e) => flog('UNHANDLED REJECTION: ' + (e && e.stack ? e.stack : e)));
+process.on('unhandledRejection', (e) => {
+  // 시나리오 중 예외: 기록하고 바로 끝낸다(멈춘 채 시간 초과까지 기다리지 않도록)
+  flog('UNHANDLED REJECTION: ' + (e && e.stack ? e.stack : e));
+  app.exit(2);
+});
 
 const q = { open: [], save: [] };
 ipcMain.handle('dialog:openFile', async () => q.open.shift() || []);

@@ -21,7 +21,9 @@ function flog(msg) {
   console.log(msg);
 }
 process.on('unhandledRejection', (err) => {
+  // 시나리오 중 예외: 기록하고 바로 끝낸다(멈춘 채 시간 초과까지 기다리지 않도록)
   flog('UNHANDLED REJECTION: ' + (err && err.stack ? err.stack : err));
+  app.exit(2);
 });
 
 ipcMain.handle('dialog:openFile', async () => {
