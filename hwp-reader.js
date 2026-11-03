@@ -164,9 +164,11 @@ function readTableCells(tableNode, tables) {
 function collectTables(node, tables) {
   node.children.forEach((child) => {
     if (isTableControl(child)) {
-      const entry = { rows: [] };
+      const entry = { rows: [], cells: [] };
       tables.push(entry);
-      entry.rows = cellsToRows(readTableCells(child, tables));
+      // cells: 병합 정보(rowSpan·colSpan)가 든 칸 목록 — 서식 기입 위치 인식이 쓴다
+      entry.cells = readTableCells(child, tables);
+      entry.rows = cellsToRows(entry.cells);
     } else {
       collectTables(child, tables);
     }
@@ -178,7 +180,7 @@ function readStream(cfb, fullPath) {
   return idx >= 0 && cfb.FileIndex[idx].content ? Buffer.from(cfb.FileIndex[idx].content) : null;
 }
 
-/** .hwp 파일 버퍼에서 모든 표를 문서 순서대로 [{ rows }]로 읽는다 (빈 표 포함) */
+/** .hwp 파일 버퍼에서 모든 표를 문서 순서대로 [{ rows, cells }]로 읽는다 (빈 표 포함) */
 function readHwpTables(buffer) {
   if (buffer.slice(0, 20).toString('latin1') === 'HWP Document File V3') {
     throw hwpError('한글 97 이전(HWP 3.0) 형식의 문서는 지원하지 않습니다. 최신 한글 프로그램에서 다시 저장한 뒤 시도하세요.');
