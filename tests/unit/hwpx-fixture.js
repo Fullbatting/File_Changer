@@ -2,6 +2,7 @@
 // 테스트용 .hwpx 만들기: 표 칸 목록(hwp-reader.js의 cells와 같은 모양)을 한글이 저장하는 것과 같은 구조
 // (hs:sec > hp:p > hp:run > hp:tbl > hp:tr > hp:tc > hp:subList > hp:p > hp:run > hp:t)로 쓴다.
 // 실제 파일처럼 다양하게: 한 줄 글자를 런 두 개로 나누고(글자 모양이 바뀐 것처럼), 빈 칸은 세 가지 모양으로 둔다.
+// 칸 글자의 한 줄이 "{RECT}"면 떠 있는 점선 상자를, "{TBL}"이면 문단 안에 들어앉은 작은 표를 넣는다(공통서식에 흔함).
 
 const PizZip = require('pizzip');
 
@@ -9,9 +10,14 @@ const NS = 'xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const LINESEG = '<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" vertsize="1000" textheight="1000" baseline="850" spacing="600" horzpos="0" horzsize="7000" flags="393216"/></hp:linesegarray>';
 
+const P_OPEN = '<hp:p id="0" paraPrIDRef="2" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">';
+const RECT = `<hp:rect id="7" zOrder="1" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="8" ratio="0"><hp:offset x="0" y="0"/><hp:lineShape color="#000000" width="33" style="DOT"/><hp:drawText lastWidth="1000" name="" editable="0"><hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER">${P_OPEN}<hp:run charPrIDRef="3"/></hp:p></hp:subList></hp:drawText></hp:rect>`;
+
 let emptyStyle = 0;
 /** 문단 하나. 긴 줄은 가운데에서 런 두 개로 나눈다 */
 function paragraph(line) {
+  if (line === '{RECT}') return `${P_OPEN}<hp:run charPrIDRef="3">${RECT}</hp:run>${LINESEG}</hp:p>`;
+  if (line === '{TBL}') return `${P_OPEN}<hp:run charPrIDRef="3">${table([{ row: 0, col: 0, text: '안쪽 표' }])}<hp:t/></hp:run>${LINESEG}</hp:p>`;
   if (line === '') {
     // 빈 칸의 세 가지 모양: 글자 없는 런 / 빈 <hp:t/> / 빈 <hp:t></hp:t>
     emptyStyle = (emptyStyle + 1) % 3;

@@ -1,6 +1,7 @@
 // form-fill.js
 // 기입 위치(form-recognize.js)마다 넣을 글자를 정하고, .hwpx 원문 XML의 그 자리만 바꿔 새 파일을 만든다.
-// - 빈 칸: 값을 그대로 넣는다(칸 서식·글꼴은 그 칸의 첫 런을 따른다).
+// - 빈 칸: 값을 그대로 넣는다(칸 서식·글꼴은 그 칸의 첫 런을 따른다). "-"만 찍힌 주민등록번호 칸도 통째로 바꾼다.
+// - 한 칸에 머리글과 값을 쓰는 공통서식: 머리글 아래 빈 줄에, 빈 줄이 없으면 머리글 뒤에 두 칸 띄우고 이어 쓴다.
 // - "라벨:      " 빈자리·서명 줄: 빈칸 너비를 크게 바꾸지 않도록 값 길이만큼 공백을 줄인다(한글 2칸, 그 밖 1칸으로 셈).
 // - 날짜 틀: 년·월·일 앞 공백 자리에 숫자를 넣는다.
 // - 선택 표시: 고른 보기의 "[   ]"를 "[ V ]"로(괄호 안 글자 수는 그대로).
@@ -92,13 +93,16 @@ function planFill(model, spots, answers = {}) {
     const p = model.paragraphById.get(spot.paragraphId);
     const text = p ? p.text : '';
     const { start, end } = spot.range;
-    if (spot.kind === 'cell' || spot.kind === 'below') {
+    if (spot.kind === 'incell' && spot.append) {
+      push(spot, spot.paragraphId, text.length, text.length, `  ${value}`);
+    } else if (spot.kind === 'cell' || spot.kind === 'below' || spot.kind === 'incell') {
       push(spot, spot.paragraphId, 0, text.length, value); // 빈 칸(공백뿐일 수도 있음)을 통째로
     } else if (spot.kind === 'unit') {
       push(spot, spot.paragraphId, start, start, `${value} `);
     } else if (spot.kind === 'inline' || spot.kind === 'sign') {
       const n = end - start;
-      push(spot, spot.paragraphId, start, end, n === 0 ? ` ${value}` : padInto(n, value));
+      // 서명 칸이 따로 있는 줄은 "(서명 또는 인)" 앞에 이름을 넣는다
+      push(spot, spot.paragraphId, start, end, n === 0 ? (spot.kind === 'sign' ? `${value}  ` : ` ${value}`) : padInto(n, value));
     } else {
       push(spot, spot.paragraphId, start, end, value); // placeholder
     }

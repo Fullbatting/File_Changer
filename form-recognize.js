@@ -3,6 +3,7 @@
 // 찾는 자리:
 //  - cell   : 짧은 머리글 칸 바로 오른쪽의 빈 칸 (예: [성명][    ])
 //  - below  : 머리글만 있는 줄 바로 아래의 빈 칸 (예: 첫 줄 [성명][관계], 둘째 줄 빈 칸)
+//  - incell : 머리글과 값을 한 칸에 쓰는 공통서식 (예: [성  명        ] 넓은 칸, 또는 머리글 줄 아래 빈 줄)
 //  - unit   : 단위만 든 칸의 단위 앞 (예: [가구원수][    명])
 //  - inline : 칸·문단 안 "라벨: (빈칸)" (예: 금융기관:      예금주:      계좌번호:)
 //  - sign   : 서명 줄 "신청인        (서명 또는 인)"
@@ -14,10 +15,16 @@
 const { cellAt } = require('./form-model.js');
 const { matchLabel, groupKind, normalizeLabel } = require('./field-dictionary.js');
 
-const BLANK_CELL = (t) => String(t || '').replace(/\s/g, '') === '';
-const UNIT_ONLY = /^\s*(명|원|세|개월|년|일|회|%|kg|cm|매|부)\s*$/;
-const BOX = /\[(\s*)\]/g;
-const SIGN_WORDS = /(신청인|대리신청인|동의자|민원인|신청자|제출인|위임인|보호자|확인자)/;
+// 빈 칸: 공백뿐이거나, 주민등록번호 칸처럼 "-"만 미리 찍혀 있는 칸
+const BLANK_CELL = (t) => /^[-－]?$/.test(String(t || '').replace(/\s/g, ''));
+// 문서 제목(○○신청서·동의서·위임장 …)은 머리글이 아니다
+const TITLE = /(신청서|동의서|확인서|신고서|요청서|위임장|통보서|청구서|보고서|조사서|추천서|지정서)$/;
+const UNIT_ONLY = /^\s*(명|원|세|개월|년|월|일|회|%|kg|cm|매|부)\s*$/;
+const SIGN_WORDS = /(신청인|대리신청인|동의자|민원인|신청자|제출인|위임인|보호자|확인자|신고자|신고인|요청인)/;
+// 시청이 쓰는 칸(접수·처리·결재)과 받는 곳: 기입 위치로 보지 않는다
+const OFFICE_LABEL = /^(접수번호|접수일자?|처리기간|처리절차|처리기관|발급번호|결재|검토|접수|담당자.*|.*귀하)$/;
+const ARROW_CELL = /^\s*[➡→⇨▶⇒]+\s*$/;
+const INLINE_BLANK = /[:：]\s*($|[)）]|\s{2,})/;
 
 /** 머리글로 볼 만한 칸: 짧고, 선택 표시·빈칸 틀이 없고, 숫자뿐이 아님 */
 function isLabelText(text) {
@@ -25,6 +32,8 @@ function isLabelText(text) {
   if (!t || t.length > 30) return false;
   if (/\[\s*\]/.test(t) || /[:：]\s*$/.test(t) || /[:：]\s{2,}/.test(t)) return false;
   if (/^[\d\s.,\-/()]+$/.test(t)) return false;
+  if (UNIT_ONLY.test(t) || ARROW_CELL.test(t)) return false;
+  if (TITLE.test(t.replace(/[\s()（）]/g, ''))) return false;
   if (/(년\s+월\s+일)/.test(t)) return false;
   return true;
 }
@@ -39,8 +48,11 @@ function groupOf(table, cell) {
   if (cell.col === 0) return null;
   const left = cellAt(table, cell.row, 0);
   if (!left || left === cell || !isLabelText(left.text)) return null;
+  // 머리글 줄의 첫 칸([관계][성명][주민등록번호] 아래가 빈 줄)은 묶음이 아니라 열 머리글
+  const under = left.rowSpan === 1 ? cellAt(table, left.row + 1, left.col) : null;
+  if (under && under.colSpan === left.colSpan && BLANK_CELL(under.text)) return null;
   const next = cellAt(table, cell.row, left.col + left.colSpan);
-  const groupsRows = left.rowSpan > 1 || (next && next !== cell && isLabelText(next.text)) || (next === cell && left.rowSpan > 1);
+  const groupsRows = left.rowSpan > 1 || (next && isLabelText(next.text));
   if (!groupsRows) return null;
   return { text: oneLine(left.text), kind: groupKind(left.text) };
 }
@@ -63,19 +75,37 @@ function recognize(model) {
     return spots[spots.length - 1];
   };
   const mapLabel = (label, group, fallbackWhy) => {
+    if (group && group.kind === 'office') return { field: null, confidence: 'none', why: '시청(보장기관) 쪽 칸입니다 — 서식 등록 때 고정값으로 한 번 넣어 두세요' };
+    if (group && group.kind === 'work') return { field: null, confidence: 'none', why: '직장 정보 칸입니다(환자 인적사항이 아님)' };
     const m = matchLabel(label, group ? group.kind : null);
     if (!m) return { field: null, confidence: 'none', why: fallbackWhy || '맞는 입력 항목이 없습니다' };
     return m;
   };
   const paragraphOf = (id) => model.paragraphById.get(id);
+  // 표·그림이 들어앉은 칸: 글자가 없어 빈 칸처럼 보여도 쓰지 않는다
+  const blockedCell = (cell) => cell.paragraphIds.some((id) => paragraphOf(id).hasObject);
 
   // 문서에 신청인 묶음이 있는지(묶음 없는 "성명"이 누구 것인지 모호한지 판단)
   const hasApplicantGroup = model.tables.some((t) => t.cells.some((c) => c.col === 0 && groupKind(c.text) === 'applicant'));
 
   /* ---------- 1. 표 칸 ---------- */
   model.tables.forEach((table) => {
+    // 처리 절차 그림(➡이 든 줄과 그 아래 줄)은 건너뛴다
+    const flowRows = new Set();
+    table.cells.filter((c) => ARROW_CELL.test(c.text)).forEach((c) => {
+      flowRows.add(c.row);
+      flowRows.add(c.row + c.rowSpan);
+    });
     table.cells.forEach((cell) => {
-      if (!isLabelText(cell.text)) return;
+      if (flowRows.has(cell.row)) return;
+      if (table.colCnt > 1 && cell.colSpan === table.colCnt) return; // 표 너비 전체 칸: 제목·안내 문구
+      const firstP = cell.paragraphIds.map(paragraphOf).find((p) => p.text.trim());
+      if (!firstP) return;
+      if (OFFICE_LABEL.test(normalizeLabel(firstP.text))) return;
+      if (!isLabelText(cell.text)) {
+        incell(table, cell);
+        return;
+      }
       const group = groupOf(table, cell);
       // 묶음 머리글 칸 자체(예: "등록 대상자")는 자리가 아니다
       if (cell.col === 0) {
@@ -92,7 +122,7 @@ function recognize(model) {
         }
         return { confidence, why: why || extraWhy || '' };
       };
-      if (right && right !== cell && BLANK_CELL(right.text) && right.paragraphIds.length > 0) {
+      if (right && right !== cell && BLANK_CELL(right.text) && right.paragraphIds.length > 0 && !blockedCell(right)) {
         const m = mapLabel(label, group);
         add({ kind: 'cell', paragraphId: right.paragraphIds[0], range: { start: 0, end: 0 }, label, group: group && group.text, where: whereOf(table, right), field: m.field, ...describe(m), reason: `표 칸 · 왼쪽 머리글 “${label}”${group ? ` (${group.text})` : ''}` });
         return;
@@ -108,13 +138,59 @@ function recognize(model) {
       }
       // 머리글 줄 아래의 빈 칸: 이 칸 오른쪽도 머리글이고(머리글만 있는 줄), 바로 아래 칸이 비어 있음
       const below = cellAt(table, cell.row + cell.rowSpan, cell.col);
-      const rowIsHeader = table.cells.filter((c) => c.row === cell.row).every((c) => isLabelText(c.text) || c.col === 0);
-      if (rowIsHeader && below && below !== cell && below.col === cell.col && BLANK_CELL(below.text) && below.paragraphIds.length > 0 && (!right || right === cell || isLabelText(right.text))) {
+      // 머리글 줄: 칸마다 글자가 있고 빈자리 틀이 없다(“금융정보 등의 제공을 동의함 (서명)”처럼 긴 머리글도)
+      const headerText = (c) => isLabelText(c.text) || (c.text.trim() !== '' && !/\[\s*\]/.test(c.text) && !INLINE_BLANK.test(c.text));
+      const rowIsHeader = table.cells.filter((c) => c.row === cell.row).every((c) => c.col === 0 || headerText(c));
+      const separator = below && table.colCnt > 1 && below.colSpan === table.colCnt; // 표 너비 전체 빈 줄은 칸 사이 띄움
+      if (rowIsHeader && below && below !== cell && !separator && below.col === cell.col && BLANK_CELL(below.text) && !blockedCell(below) && below.paragraphIds.length > 0 && (!right || right === cell || headerText(right))) {
         const m = mapLabel(label, group);
         add({ kind: 'below', paragraphId: below.paragraphIds[0], range: { start: 0, end: 0 }, label, group: group && group.text, where: whereOf(table, below), field: m.field, ...describe(m), reason: `표 칸 · 위 머리글 “${label}”` });
+        return;
       }
+      // 서명 칸이 따로 있는 줄: [요청인][(서명 또는 인)]
+      if (right && right !== cell && /^\s*[(（]\s*(서명|인|날인)/.test(right.text) && SIGN_WORDS.test(label)) {
+        add({ kind: 'sign', paragraphId: right.paragraphIds[0], range: { start: 0, end: 0 }, label, where: whereOf(table, right), field: 'auto.signer', confidence: 'sure', why: '', reason: `서명 칸 · “${label}” 오른쪽 “(서명 또는 인)” 앞` });
+        return;
+      }
+      incell(table, cell);
     });
   });
+
+  /**
+   * 머리글과 값을 한 칸에 쓰는 공통서식 칸. 오른쪽·아래 빈 칸이 없을 때만 부른다.
+   * - 머리글 문단 뒤에 빈 문단이 있으면 그 빈 문단에 ([성명 / (빈 줄)])
+   * - 없으면 머리글 뒤에 이어 쓴다([성  명        ] 넓은 칸) — 맞는 입력 항목이 있을 때만
+   */
+  function incell(table, cell) {
+    if (cell.col === 0 && cell.rowSpan > 1) return; // 묶음 머리글
+    const ps = cell.paragraphIds.map(paragraphOf);
+    // 칸 전체가 머리글이면("동의자 / 성  명") 마지막 글자 줄까지가 머리글, 아니면 첫 글자 줄만
+    const whole = isLabelText(cell.text);
+    const textIdx = ps.map((p, i) => (p.text.trim() ? i : -1)).filter((i) => i >= 0);
+    const at = whole ? textIdx[textIdx.length - 1] : textIdx[0];
+    const labelP = ps[at];
+    const label = oneLine(whole ? cell.text : labelP.text);
+    if (!isLabelText(label) || ps.some((p) => p.hasObject)) return;
+    const group = groupOf(table, cell);
+    if (cell.col === 0 && !group) {
+      const next = cellAt(table, cell.row, cell.colSpan);
+      if (next && isLabelText(next.text)) return; // 한 줄짜리 묶음 머리글("긴급의료지원 대상자")
+    }
+    const m = mapLabel(label, group);
+    const rest = ps.slice(at + 1);
+    const emptyP = rest.find((p) => BLANK_CELL(p.text) && !p.hasObject);
+    const base = { label, group: group && group.text, where: whereOf(table, cell), field: m.field, confidence: m.confidence, why: m.why };
+    if (emptyP) {
+      add({ kind: 'incell', paragraphId: emptyP.id, range: { start: 0, end: 0 }, ...base, reason: `한 칸 · 머리글 “${label}” 아래 빈 줄` });
+      return;
+    }
+    if (!m.field) return;
+    // 칸 안에 "ㅇ 자택 :  ㅇ 휴대전화 :" 같은 빈자리가 따로 있으면 전화번호는 그쪽에 쓴다
+    if (/(phone|mobile)$/.test(m.field) && rest.some((p) => INLINE_BLANK.test(p.text))) return;
+    const end = labelP.text.length;
+    if (!take(labelP.id, end, end)) return;
+    add({ kind: 'incell', paragraphId: labelP.id, range: { start: end, end }, append: true, ...base, reason: `한 칸 · 머리글 “${label}” 뒤에 이어 씀` });
+  }
 
   /* ---------- 2. 문단 안 패턴 ---------- */
   const cellGroupOf = (p) => {
@@ -143,7 +219,7 @@ function recognize(model) {
     }
 
     // 서명 줄: "신청인(대리신청인)：        (서명 또는 인)" · "민원인        (서명 또는 인)"
-    const sign = /([가-힣()（）]{2,16})\s*[:：]?(\s{3,})[(（]\s*(서명|인|날인)/g;
+    const sign = /([가-힣()（）]{2,16}(?: [가-힣]{1,6})?)\s*[:：]?(\s{3,})[(（]\s*(서명|인|날인)/g;
     while ((m = sign.exec(text))) {
       const label = m[1].replace(/^[()（）]+/, '');
       if (!SIGN_WORDS.test(label)) continue;
@@ -158,7 +234,9 @@ function recognize(model) {
     const date = /(\s{2,})년(\s{2,})월(\s{2,})일/g;
     while ((m = date.exec(text))) {
       const yEnd = m.index + m[1].length;
-      const yStart = Math.max(m.index, yEnd - 8);
+      // "20    년"처럼 앞 두 자리가 미리 찍힌 틀은 그 숫자까지 연도 자리로
+      const century = /(\d{2})$/.exec(text.slice(0, m.index));
+      const yStart = century ? m.index - century[1].length : Math.max(m.index, yEnd - 8);
       const mStart = yEnd + 1;
       const mEnd = mStart + m[2].length;
       const dStart = mEnd + 1;
@@ -256,6 +334,10 @@ function recognize(model) {
         const rest = text.slice(close + 1);
         // 선택지 이름: 다음 빈 상자·괄호·쉼표·빗금·두 칸 이상 공백 앞까지("[소아]"처럼 글자가 든 대괄호는 이름에 포함)
         const optText = oneLine((/^\s*((?:\[[^\]\s][^\]]*\]|[^[\]()（）,/:：])*?)(?=\s{2,}|\s*\[\s*\]|\s*[()（）,/]|\s*$)/.exec(rest) || ['', ''])[1]);
+        if (/^\s*(안에|에는|에\s|표시)/.test(rest)) {
+          i = close; // 안내 문구("[  ]에는 해당되는 곳에 √ 표시") — 선택지가 아니다
+          continue;
+        }
         const option = { text: optText || '(이름 없음)', paragraphId: p.id, range: { start: i + 1, end: close } };
         if (depth === 0) {
           main.push(option);

@@ -9,6 +9,9 @@ const { parseXml, attr, childrenByLocal, walk, decodeEntities } = require('./hwp
 
 /** 문단 안에서 글자로 보이는 요소: 줄바꿈·탭은 한 글자로 센다(바꿀 수는 없는 자리) */
 const VIRTUAL_CHARS = { lineBreak: '\n', tab: '\t' };
+// 문단 안에 들어앉은 개체(표·그림·OLE·수식): 이런 문단은 글자가 없어도 빈 칸이 아니다. 떠 있는 도형(점선 상자 등)은 막지 않는다
+const OBJECT_LOCALS = new Set(['tbl', 'pic', 'ole', 'equation']);
+const hasObject = (el) => el.children.some((run) => run.type === 'el' && run.local === 'run' && run.children.some((c) => c.type === 'el' && OBJECT_LOCALS.has(c.local)));
 
 /** zip 안의 본문 파일 이름을 순서대로 */
 function sectionNames(zip) {
@@ -68,7 +71,7 @@ function modelFromHwpx(buffer) {
     let pIndex = 0;
     walk(root, (el) => {
       if (el.local === 'p') {
-        const p = { id: `${si}.${pIndex++}`, section: si, el, ...readParagraph(xml, el), cell: null };
+        const p = { id: `${si}.${pIndex++}`, section: si, el, ...readParagraph(xml, el), hasObject: hasObject(el), cell: null };
         model.paragraphs.push(p);
         paragraphByEl.set(el, p);
       }
