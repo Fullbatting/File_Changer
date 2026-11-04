@@ -8,22 +8,23 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { webPreferences, protectWindow, assertTrustedSender } = require('../../app-security');
 
 const REPO = path.join(__dirname, '..', '..');
 
 function createHarness(name) {
-  const queues = { open: [], save: [], folder: [], shown: [] };
+  const queues = { open: [], save: [], shown: [] };
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), `wb-e2e-userdata-`));
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), `wb-e2e-work-`));
   const results = [];
   const rendererErrors = [];
   let win = null;
 
-  ipcMain.handle('dialog:openFile', async () => queues.open.shift() || []);
-  ipcMain.handle('dialog:saveFile', async () => queues.save.shift() || null);
-  ipcMain.handle('dialog:selectFolder', async () => queues.folder.shift() || null);
-  ipcMain.handle('app:getUserDataPath', () => userDataDir);
+  ipcMain.handle('dialog:openFile', async (e) => { assertTrustedSender(e, win); return queues.open.shift() || []; });
+  ipcMain.handle('dialog:saveFile', async (e) => { assertTrustedSender(e, win); return queues.save.shift() || null; });
+  ipcMain.handle('app:getUserDataPath', (e) => { assertTrustedSender(e, win); return userDataDir; });
   ipcMain.handle('shell:showItemInFolder', async (e, p) => {
+    assertTrustedSender(e, win);
     queues.shown.push(p);
     return true;
   });
@@ -31,7 +32,7 @@ function createHarness(name) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   /** 렌더러에서 코드 실행. { } 블록으로 감싸 전역 const 재선언 오류를 막는다 — 마지막 식의 값이 돌아온다 */
-  const js = (code) => win.webContents.executeJavaScript(`{ ${code} }`);
+  const js = (code) => win.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: `{ ${code} }` }]);
 
   function record(title, ok, detail) {
     results.push({ title, ok: !!ok, detail });
@@ -52,7 +53,8 @@ function createHarness(name) {
     }
     await app.whenReady();
     // 초점·requestAnimationFrame이 실제 앱처럼 동작하도록 창을 띄우고(xvfb 안) 백그라운드 절전을 끈다
-    win = new BrowserWindow({ width, height, show: true, webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false } });
+    win = new BrowserWindow({ width, height, show: true, webPreferences: { ...webPreferences(), backgroundThrottling: false } });
+    protectWindow(win);
     // Electron 35부터 console-message는 이벤트 객체(e.level 문자열, e.message)로 받는다. 오류만 실패로 센다.
     win.webContents.on('console-message', (e) => {
       if (e.level === 'error') rendererErrors.push(e.message);
