@@ -1,7 +1,9 @@
 // common.js
-// 화면 공통 도우미: 진행 기록(로그)과 오류 알림. 진행 기록에는 인적사항 값을 남기지 않는다(부르는 쪽이 지킨다).
+// 화면 공통 도우미: 진행 기록(로그 — 접으면 마지막 한 줄만, 펼치면 전체)과 오류 알림. 진행 기록에는 인적사항 값을 남기지 않는다(부르는 쪽이 지킨다).
 
 const logArea = document.getElementById('logArea');
+const logLast = document.getElementById('logLast');
+const logToggle = document.getElementById('btnToggleLog');
 let logScrollPending = false;
 
 function log(message, level = 'info') {
@@ -10,6 +12,9 @@ function log(message, level = 'info') {
   // value +=는 로그 전체를 다시 배치하므로 끝에 덧붙이기만 한다
   const end = logArea.value.length;
   logArea.setRangeText(`[${time}] [${prefix}] ${message}\n`, end, end, 'end');
+  // 접어 두었을 때는 마지막 한 줄만 보인다
+  logLast.textContent = `${time}  ${message}`;
+  logLast.className = `fa-log-last ${level}`;
   // 맨 아래로 스크롤은 다음 화면 갱신 때 한 번만(바로 scrollHeight를 읽으면 강제 레이아웃이 생긴다)
   if (logScrollPending) return;
   logScrollPending = true;
@@ -21,6 +26,14 @@ function log(message, level = 'info') {
 
 document.getElementById('btnClearLog').addEventListener('click', () => {
   logArea.value = '';
+  logLast.textContent = '';
+});
+
+logToggle.addEventListener('click', () => {
+  const open = logArea.hidden;
+  logArea.hidden = !open;
+  logToggle.setAttribute('aria-expanded', String(open));
+  if (open) logArea.scrollTop = logArea.scrollHeight;
 });
 
 /** 파일 오류 코드를 알기 쉬운 문구로 */
