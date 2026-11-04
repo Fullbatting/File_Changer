@@ -49,8 +49,9 @@ function sleep(ms) {
 async function run() {
   win = new BrowserWindow({
     show: false,
-    webPreferences: { nodeIntegration: true, contextIsolation: false },
+    webPreferences: require('../../app-security').webPreferences(),
   });
+  const js = (code) => win.webContents.executeJavaScriptInIsolatedWorld(999, [{ code }]);
   flog('BrowserWindow created, loading index.html...');
   await win.loadFile(path.join(REPO, 'index.html'));
   flog('index.html loaded');
@@ -72,7 +73,7 @@ async function run() {
 
   // 네이티브 alert()/confirm()은 자동화 환경에서 클릭할 수 없어 렌더러를 영원히
   // 멈추게 하므로, 테스트 중에는 가짜로 교체해 둔다 (실제 앱 동작에는 영향 없음).
-  await win.webContents.executeJavaScript(`
+  await js(`
     window.alert = (msg) => { window.__lastAlert = msg; };
     window.confirm = (msg) => { window.__lastConfirm = msg; return true; };
     true;
@@ -82,23 +83,23 @@ async function run() {
   await sleep(500); // let the app boot (userDataPath IPC roundtrip + synonym dict load)
   flog('CP2: sleep done');
 
-  const logText = await win.webContents.executeJavaScript("document.getElementById('logArea').value");
+  const logText = await js("document.getElementById('logArea').value");
   flog('CP3: logText read done, len=' + logText.length);
   record('앱 로드 및 초기 로그에 "준비" 메시지', logText.includes('프로그램이 준비되었습니다'), logText.slice(-200));
 
   /* ---------------- 직접 입력 (docx) ---------------- */
 
   openFileQueue.push([path.join(FIX, 'template.docx')]);
-  await win.webContents.executeJavaScript("document.getElementById('dropTemplate').click()");
+  await js("document.getElementById('dropTemplate').click()");
   await sleep(200);
 
-  await win.webContents.executeJavaScript("document.getElementById('btnExtractVars').click()");
+  await js("document.getElementById('btnExtractVars').click()");
   await sleep(200);
 
-  const extractStatus = await win.webContents.executeJavaScript("document.getElementById('extractStatus').textContent");
+  const extractStatus = await js("document.getElementById('extractStatus').textContent");
   record('템플릿 변수 추출 (docx)', extractStatus.includes('2개 변수') || extractStatus.includes('변수 발견'), extractStatus);
 
-  await win.webContents.executeJavaScript(`
+  await js(`
     document.querySelectorAll('#varFormGrid input').forEach(inp => {
       inp.value = inp.dataset.varName === '이름' ? '테스트유저' : '2026-10-17';
       inp.dispatchEvent(new Event('input'));
@@ -107,7 +108,7 @@ async function run() {
 
   const manualSavePath = path.join(FIX, 'manual_result.docx');
   saveFileQueue.push(manualSavePath);
-  await win.webContents.executeJavaScript("document.getElementById('btnGenerateDocx').click()");
+  await js("document.getElementById('btnGenerateDocx').click()");
   await sleep(300);
 
   const manualExists = fs.existsSync(manualSavePath);
@@ -122,28 +123,28 @@ async function run() {
 
   /* ---------------- TAB 2: batch mode ---------------- */
 
-  await win.webContents.executeJavaScript(`
+  await js(`
     document.querySelector('input[name="mmMode"][value="batch"]').click();
   `);
   await sleep(100);
 
   openFileQueue.push([path.join(FIX, 'mmData.xlsx')]);
-  await win.webContents.executeJavaScript("document.getElementById('dropMailMergeData').click()");
+  await js("document.getElementById('dropMailMergeData').click()");
   await sleep(200);
 
-  await win.webContents.executeJavaScript("document.getElementById('btnLoadMailMergeData').click()");
+  await js("document.getElementById('btnLoadMailMergeData').click()");
   await sleep(200);
 
-  const mmStatus = await win.webContents.executeJavaScript("document.getElementById('mailMergeDataStatus').textContent");
+  const mmStatus = await js("document.getElementById('mailMergeDataStatus').textContent");
   record('배치 데이터 불러오기', mmStatus.includes('2행'), mmStatus);
 
-  const mmMapping = await win.webContents.executeJavaScript(`
+  const mmMapping = await js(`
     Array.from(document.querySelectorAll('#mailMergeMappingTableBody select')).map(s => [s.dataset.templateVar, s.value])
   `);
   const mmMappingOk = mmMapping.some(([v, c]) => v === '이름' && c === '이름') && mmMapping.some(([v, c]) => v === '날짜' && c === '날짜');
   record('배치 변수<->컬럼 자동 매핑 (exact)', mmMappingOk, JSON.stringify(mmMapping));
 
-  const mmPreviewCells = await win.webContents.executeJavaScript(`
+  const mmPreviewCells = await js(`
     Array.from(document.querySelectorAll('#mailMergeMappingTableBody tr')).map(tr => {
       const varCell = tr.querySelector('td');
       const preview = tr.querySelector('.mapping-preview-cell');
@@ -158,13 +159,13 @@ async function run() {
   );
 
   selectFolderQueue.push(batchOutDir);
-  await win.webContents.executeJavaScript("document.getElementById('btnGenerateBatch').click()");
+  await js("document.getElementById('btnGenerateBatch').click()");
   await sleep(300);
 
-  const batchReviewVisible = await win.webContents.executeJavaScript("document.getElementById('mailMergeReviewModal').hidden === false");
+  const batchReviewVisible = await js("document.getElementById('mailMergeReviewModal').hidden === false");
   record('배치 생성 확인 모달 표시', batchReviewVisible, '');
 
-  await win.webContents.executeJavaScript("document.getElementById('mailMergeReviewProceed').click()");
+  await js("document.getElementById('mailMergeReviewProceed').click()");
   await sleep(500);
 
   const batchFiles = fs.readdirSync(batchOutDir).filter((f) => f.endsWith('.docx'));
@@ -180,13 +181,13 @@ async function run() {
 
   /* ---------------- 동의어 사전 모달 ---------------- */
 
-  await win.webContents.executeJavaScript("document.getElementById('btnManageSynonymsTab2').click()");
+  await js("document.getElementById('btnManageSynonymsTab2').click()");
   await sleep(100);
-  const synonymModalVisible = await win.webContents.executeJavaScript("document.getElementById('synonymManagerModal').hidden === false");
+  const synonymModalVisible = await js("document.getElementById('synonymManagerModal').hidden === false");
   record('동의어 사전 관리 모달 열림', synonymModalVisible, '');
-  const synonymTextHasDefault = await win.webContents.executeJavaScript("document.getElementById('synonymGroupsTextarea').value.includes('이름, 성명, 성함')");
+  const synonymTextHasDefault = await js("document.getElementById('synonymGroupsTextarea').value.includes('이름, 성명, 성함')");
   record('동의어 사전 기본값 로드됨', synonymTextHasDefault, '');
-  await win.webContents.executeJavaScript("document.getElementById('synonymManagerCancel').click()");
+  await js("document.getElementById('synonymManagerCancel').click()");
 
   /* ---------------- 콘솔 에러 체크 ---------------- */
   record('렌더러 콘솔 에러 없음', rendererErrors.length === 0, JSON.stringify(rendererErrors));

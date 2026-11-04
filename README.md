@@ -73,10 +73,17 @@ npm start
 npm install                             # 의존성 설치
 node node_modules/electron/install.js   # Electron 실행 파일 내려받기 (Electron 42부터 npm install이 자동으로 받지 않음)
 npm start                               # 앱 실행 (electron .)
-npm test                                # 단위 테스트 + 회귀 시나리오 (Linux 서버에서는 xvfb-run -a npm test)
+npm test                                # 단위 테스트 + 회귀 시나리오 + 보안 시나리오 (Linux 서버에서는 xvfb-run -a npm test)
 npm run test:unit                       # 판단 로직 단위 테스트(Electron 없이): 메일머지 필드·서식 보관함·채우기/인쇄·데이터 파일·자동 매핑·서식 엔진·한글 자동 조작 스크립트
 npm run test:legacy                     # 화면 시나리오(서식 등록 → 출력 → 인적사항 지움, 예전 메일머지, 한글 HWPX 표·템플릿, 전체 기능 점검 3단계). Linux 서버에서는 xvfb-run -a
+npm run test:e2e                        # 보안 시나리오: 실제 main.js 창의 격리·CSP·IPC 발신자 확인, 악성 변수 이름이 든 HWPX 템플릿. Linux 서버에서는 xvfb-run -a
 ```
+
+## 앱 보안
+
+- 앱 페이지는 Node 통합을 끄고 컨텍스트를 격리합니다(`app-security.js`). 페이지 스크립트를 금지하는 CSP를 두고, 팝업과 일반 페이지 이동을 막습니다. 파일 대화상자·사용자 데이터 폴더 같은 IPC는 앱의 메인 창·메인 프레임에서 온 요청만 받습니다.
+- 앱 코드(`renderer.js` 이하)는 `preload.js`가 index.html에서만 불러오며, Node를 쓸 수 있는 **샌드박스 밖의 격리된 preload 세계**에서 실행됩니다. 전체 앱을 샌드박스화한 설계는 아니므로 화면에 글자를 넣을 때는 늘 텍스트로 넣습니다(`ui-dom.js`). 템플릿의 변수 이름도 HTML이 아닌 텍스트로 표시합니다.
+- Electron의 일부 특수 페이지 이동(예: `about:blank`)은 이동 차단을 거치지 않을 수 있으나, 그 페이지에서는 앱을 초기화하지 않고 IPC도 허용하지 않습니다.
 
 ## 코드 구성
 
@@ -84,6 +91,7 @@ npm run test:legacy                     # 화면 시나리오(서식 등록 → 
 
 | 파일 | 하는 일 |
 | --- | --- |
+| `main.js` · `app-security.js` · `preload.js` | 앱 창과 IPC, 보안 설정(격리·이동 차단·IPC 발신자 확인), 격리된 세계에서 앱 코드 불러오기 |
 | `app-shell.js` | 화면 전환, 이 PC의 서식 보관함·설정 열기, 남은 임시 파일 정리 |
 | `print-screen.js` · `forms-screen.js` · `settings-screen.js` | ① 서류 출력 · ② 서식 관리 · ③ 설정 화면 |
 | `merge-fields.js` | 한글 메일머지 필드 사전(이름·주민번호·1~13·월1~일2·진료기간 …)과 입력 → 필드 값 규칙 |

@@ -40,7 +40,7 @@ const check = (name, ok, detail = '') => {
 };
 
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true, contextIsolation: false } });
+  const win = new BrowserWindow({ show: false, webPreferences: { ...require('../../app-security').webPreferences(), preload: path.join(__dirname, 'test-preload.js') } });
   const consoleErrors = [];
   win.webContents.on('console-message', (e, lvl, msg) => {
     const level = typeof e.level === 'string' ? { debug: 0, info: 1, warning: 2, error: 3 }[e.level] : lvl;
@@ -48,7 +48,7 @@ app.whenReady().then(async () => {
     if (level >= 3) consoleErrors.push(message);
   });
   await win.loadFile(path.join(REPO, 'index.html'));
-  const js = (code) => win.webContents.executeJavaScript(`{ ${code} }`);
+  const js = (code) => win.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: `{ ${code} }` }]);
   await js(`window.__alerts = []; window.alert = (m) => { window.__alerts.push(String(m)); }; window.__confirmAnswer = true; window.confirm = (m) => { window.__lastConfirm = String(m); return window.__confirmAnswer; }; true;`);
   await sleep(600);
   const logText = () => js(`document.getElementById('logArea').value`);
@@ -80,7 +80,7 @@ app.whenReady().then(async () => {
     await click('btnManageSynonymsTab2', 150);
     await js(`const t = document.getElementById('synonymGroupsTextarea'); t.value = t.value + '\\n급여, 월급, 봉급'; document.getElementById('synonymManagerSave').click(); true;`);
     await sleep(200);
-    const syn = await js(`require(${JSON.stringify(path.join(REPO, 'common.js'))}).autoMatchAll(['월급'], ['급여', '이름'])['월급']`);
+    const syn = await js(`window.__testAutoMatch('월급', ['급여', '이름'])`);
     check('동의어 사전 추가가 즉시 자동 매핑에 반영', syn.match === '급여' && syn.reason === 'synonym', syn);
 
     // 직접 입력: .docx (머리글 변수 + 반복 태그 제외)
@@ -212,7 +212,7 @@ app.whenReady().then(async () => {
     await sleep(300);
     const log3 = await logText();
     check('손상된 동의어 파일 → 경고 후 기본 사전으로 계속', log3.includes('동의어 사전을 불러오는 중 오류'), log3);
-    const syn = await js(`require(${JSON.stringify(path.join(REPO, 'common.js'))}).autoMatchAll(['성명'], ['이름'])['성명']`);
+    const syn = await js(`window.__testAutoMatch('성명', ['이름'])`);
     check('손상 복구 후에도 기본 동의어 매핑 동작', syn.match === '이름', syn);
   }
 

@@ -1,5 +1,6 @@
 // 서식 자동 기입 시나리오: 서식 폴더 등록(파일 이름으로 분류) → 사전에 없는 필드 검토 → 담당자 설정 →
 // 인적사항 입력 → 주소로 기관 추천 → 세대주/세대원 → 출력(가짜 한글 인쇄) → 인적사항 지움·임시 파일 지움 →
+// (프로덕션과 같은 격리 세계에서 실행: 테스트 코드는 executeJavaScriptInIsolatedWorld, 가짜 인쇄는 autofill-preload.js)
 // 디스크에 인적사항이 남지 않았는지 → 한글 파일로 저장 → 백업 내보내기·가져오기. 값은 모두 가짜 예시다.
 const { app, BrowserWindow, ipcMain } = require('electron');
 const fs = require('fs');
@@ -34,9 +35,10 @@ const sectionOf = (file) => new PizZip(fs.readFileSync(file)).file('Contents/sec
 const allFilesUnder = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? allFilesUnder(path.join(dir, e.name)) : [path.join(dir, e.name)]));
 
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true, contextIsolation: false } });
+  // 프로덕션과 같은 보안 설정(격리 세계) + 테스트 preload(가짜 인쇄)
+  const win = new BrowserWindow({ show: false, webPreferences: { ...require(path.join(REPO, 'app-security.js')).webPreferences(), preload: path.join(__dirname, 'autofill-preload.js') } });
   await win.loadFile(path.join(REPO, 'index.html'));
-  const js = (code) => win.webContents.executeJavaScript(code);
+  const js = (code) => win.webContents.executeJavaScriptInIsolatedWorld(999, [{ code }]);
   await js(`window.alert = (m) => { window.__alerts = (window.__alerts || []).concat(String(m)); }; window.confirm = () => true; true;`);
   await sleep(600);
   const visible = (id) => js(`!document.getElementById(${JSON.stringify(id)}).hidden`);
@@ -106,19 +108,7 @@ app.whenReady().then(async () => {
   await sleep(100);
 
   /* ---------- 6. 출력(가짜 한글 인쇄): 채운 파일 확인, 임시 파일·인적사항 지움 ---------- */
-  await js(`(() => {
-    const fs = require('fs'); const path = require('path');
-    window.__printedFiles = [];
-    require(${JSON.stringify(path.join(REPO, 'app-shell.js'))}).app.hooks.hancom = async (action, args) => {
-      if (action !== 'print') return { ok: false, error: '테스트에서는 ' + action + '을 하지 않습니다' };
-      const copy = path.join(${JSON.stringify(printed)}, 'p' + window.__printedFiles.length + '.hwpx');
-      fs.copyFileSync(args.file, copy);
-      window.__printedFiles.push({ temp: args.file, copy, copies: args.copies });
-      return { ok: true, steps: [] };
-    };
-    document.getElementById('btnMore').click();
-    return true;
-  })()`);
+  await js(`window.__autofillFakePrint(${JSON.stringify(printed)}); document.getElementById('btnMore').click(); true;`);
   await js(`document.getElementById('btnPrint').click(); true;`);
   await sleep(800);
   const printedFiles = await js('window.__printedFiles');
@@ -187,6 +177,8 @@ app.whenReady().then(async () => {
   /* ---------- 10. 예전 메일머지 화면도 그대로 ---------- */
   await js(`document.querySelector('[data-screen="tab2"]').click(); true;`);
   record('예전 메일머지 화면으로 바꿀 수 있음', (await visible('tab2')) && !(await visible('screenPrint')), '');
+  const pageGlobals = await win.webContents.executeJavaScript('({ require: typeof require, process: typeof process })');
+  record('웹 페이지 쪽에는 Node가 노출되지 않음(서식 자동 기입도 격리 세계에서 동작)', pageGlobals.require === 'undefined' && pageGlobals.process === 'undefined', JSON.stringify(pageGlobals));
 
   const passed = results.filter(Boolean).length;
   console.log(`=== ${passed}/${results.length} passed ===`);

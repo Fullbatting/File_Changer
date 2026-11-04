@@ -16,9 +16,9 @@ process.on('unhandledRejection', (e) => {
   app.exit(2);
 });
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true, contextIsolation: false } });
+  const win = new BrowserWindow({ show: false, webPreferences: require('../../app-security').webPreferences() });
   await win.loadFile(path.join(__dirname, '..', '..', 'index.html'));
-  const js = (c) => win.webContents.executeJavaScript(c);
+  const js = (code) => win.webContents.executeJavaScriptInIsolatedWorld(999, [{ code }]);
   await js('window.alert = (m) => { window.__a = m; }; true;');
   await sleep(300);
   await js(`document.getElementById('dropTemplate').click(); true;`);

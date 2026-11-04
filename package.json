@@ -11,8 +11,9 @@
   "scripts": {
     "start": "electron .",
     "test:unit": "node tests/unit/run.js",
-    "test": "npm run test:unit && npm run test:legacy",
-    "test:legacy": "node tests/legacy/run.js"
+    "test": "npm run test:unit && npm run test:legacy && npm run test:e2e",
+    "test:legacy": "node tests/legacy/run.js",
+    "test:e2e": "node tests/e2e/run.js"
   },
   "dependencies": {
     "docxtemplater": "^3.47.2",

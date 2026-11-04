@@ -3,6 +3,7 @@
 
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
+const { webPreferences, protectWindow, assertTrustedSender } = require('./app-security');
 
 let mainWindow = null;
 
@@ -13,13 +14,10 @@ function createWindow() {
     minWidth: 900,
     minHeight: 640,
     backgroundColor: '#f4f6f9',
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
-      spellcheck: false,
-    },
+    webPreferences: webPreferences(),
   });
 
+  protectWindow(mainWindow);
   mainWindow.setMenuBarVisibility(false);
   mainWindow.loadFile(path.join(__dirname, 'index.html'));
 
@@ -50,6 +48,7 @@ app.on('window-all-closed', () => {
  * 반환: 선택된 파일 경로 배열 (취소 시 빈 배열)
  */
 ipcMain.handle('dialog:openFile', async (event, args = {}) => {
+  assertTrustedSender(event, mainWindow);
   const { title = '파일 선택', filters = [{ name: 'All Files', extensions: ['*'] }], multi = false } = args;
 
   const properties = ['openFile'];
@@ -71,6 +70,7 @@ ipcMain.handle('dialog:openFile', async (event, args = {}) => {
  * 반환: 선택된 저장 경로 (취소 시 null)
  */
 ipcMain.handle('dialog:saveFile', async (event, args = {}) => {
+  assertTrustedSender(event, mainWindow);
   const { title = '파일 저장', defaultPath = '', filters = [{ name: 'All Files', extensions: ['*'] }] } = args;
 
   const result = await dialog.showSaveDialog(mainWindow, {
@@ -88,7 +88,10 @@ ipcMain.handle('dialog:saveFile', async (event, args = {}) => {
  * Windows: %APPDATA%/doc-convert-mailmerge, macOS: ~/Library/Application Support/doc-convert-mailmerge
  * (예전 통합 프로그램과 같은 폴더 이름을 그대로 써서, 저장해 둔 동의어 사전을 이어 쓴다)
  */
-ipcMain.handle('app:getUserDataPath', () => app.getPath('userData'));
+ipcMain.handle('app:getUserDataPath', (event) => {
+  assertTrustedSender(event, mainWindow);
+  return app.getPath('userData');
+});
 
 
 /**
@@ -97,6 +100,7 @@ ipcMain.handle('app:getUserDataPath', () => app.getPath('userData'));
  * 반환: 선택된 폴더 경로 (취소 시 null)
  */
 ipcMain.handle('dialog:selectFolder', async (event, args = {}) => {
+  assertTrustedSender(event, mainWindow);
   const { title = '폴더 선택', defaultPath = '' } = args;
 
   const result = await dialog.showOpenDialog(mainWindow, {
