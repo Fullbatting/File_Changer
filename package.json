@@ -16,9 +16,7 @@
     "test:e2e": "node tests/e2e/run.js"
   },
   "dependencies": {
-    "docxtemplater": "^3.47.2",
     "electron": "^44.9.0",
-    "iconv-lite": "^0.6.3",
     "pizzip": "^3.1.6",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },

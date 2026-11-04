@@ -1,5 +1,5 @@
 // app-shell.js
-// 서식 자동 기입 앱의 틀: 화면 전환(서류 출력 · 서식 관리 · 설정 · 예전 메일머지), 이 PC의 서식 보관함과 설정 열기,
+// 서식 자동 기입 앱의 틀: 화면 전환(서류 출력 · 서식 관리 · 설정), 이 PC의 서식 보관함과 설정 열기,
 // 시작할 때 남은 임시 파일 정리. 화면마다의 동작은 print-screen.js · forms-screen.js · settings-screen.js.
 
 const { ipcRenderer } = require('electron');
@@ -29,7 +29,7 @@ const app = {
   },
 };
 
-const SCREENS = ['screenPrint', 'screenForms', 'screenSettings', 'tab2'];
+const SCREENS = ['screenPrint', 'screenForms', 'screenSettings'];
 
 function showScreen(id) {
   document.querySelectorAll('.fa-nav button').forEach((b) => {

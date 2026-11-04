@@ -3,7 +3,6 @@ const { app, BrowserWindow, dialog } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const PizZip = require('pizzip');
 
 const repo = path.join(__dirname, '..', '..');
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'production-security-'));
@@ -60,40 +59,29 @@ async function run() {
   await sleep(200);
   record('실제 페이지 CSP가 스크립트와 이벤트 속성을 차단', !(await win.webContents.executeJavaScript('window.__executed')));
 
-  const template = path.join(work, 'template.hwpx');
-  const zip = new PizZip();
-  zip.file('Contents/section0.xml', '<hs:sec xmlns:hs="urn:section" xmlns:hp="urn:paragraph"><hp:p><hp:run><hp:t>{{이</hp:t></hp:run><hp:run><hp:t>름}}</hp:t></hp:run></hp:p></hs:sec>');
-  fs.writeFileSync(template, zip.generate({ type: 'nodebuffer' }));
-  open.push([template]);
-  await click('dropTemplate');
-  await click('btnExtractVars');
-  await js(`document.querySelector('#varFormGrid input').value = '홍길동'; true;`);
-  const manual = path.join(work, 'manual.hwpx');
-  saves.push(manual);
-  await click('btnGenerateDocx');
-  record('실제 열기·저장 IPC와 HWPX 직접 입력',
-    fs.existsSync(manual) && new PizZip(fs.readFileSync(manual)).file('Contents/section0.xml').asText().includes('홍길동') &&
-    calls.some((c) => c.kind === 'open' && c.options.properties.includes('openFile')) &&
-    calls.some((c) => c.kind === 'save' && c.options.defaultPath.endsWith('.hwpx')), calls);
+  // 서식 파일 추가(열기 IPC) → 등록 확인 창 → 등록
+  const form = path.join(repo, 'tests', 'fixtures', 'forms', '암환자_의료비_등록_신청서.hwp');
+  open.push([form]);
+  await click('btnAddFiles');
+  await click('importConfirm');
+  const rows = await js(`document.querySelectorAll('#formsTableBody tr[data-id]').length`);
+  record('실제 열기 IPC로 서식 등록', rows === 1 && calls.some((c) => c.kind === 'open' && c.options.properties.includes('openFile') && c.options.properties.includes('multiSelections')), { rows, calls });
 
-  const csv = path.join(work, 'data.csv');
-  fs.writeFileSync(csv, '\uFEFF이름\n김영희\n이철수\n');
-  const out = path.join(work, 'batch');
-  fs.mkdirSync(out);
-  await js(`const r = document.querySelector('input[name="mmMode"][value="batch"]'); r.checked = true; r.dispatchEvent(new Event('change', { bubbles: true })); true;`);
-  open.push([csv]);
-  await click('dropMailMergeData');
-  await click('btnLoadMailMergeData');
-  await click('btnGenerateBatch');
-  open.push([out]);
-  await click('mailMergeReviewProceed');
-  const generated = fs.readdirSync(out).map((file) => new PizZip(fs.readFileSync(path.join(out, file))).file('Contents/section0.xml').asText());
-  record('실제 폴더 IPC와 여러 행 메일머지',
-    generated.length === 2 && generated.some((xml) => xml.includes('김영희')) &&
-    generated.some((xml) => xml.includes('이철수')) &&
-    calls.some((c) => c.kind === 'open' && c.options.properties.includes('openDirectory')), calls);
+  // 폴더째 추가(폴더 IPC): 한글 서식이 없는 폴더면 안내만
+  const empty = path.join(work, 'empty');
+  fs.mkdirSync(empty);
+  open.push([empty]);
+  await click('btnAddFolder');
+  record('실제 폴더 IPC', calls.some((c) => c.kind === 'open' && c.options.properties.includes('openDirectory')), calls);
 
-  // 서식 자동 기입 앱은 시작할 때 사용자 데이터 폴더(IPC)를 받아 서식 보관함·설정을 그 안에 둔다
+  // 백업 내보내기(저장 IPC)
+  const backup = path.join(work, 'backup.zip');
+  saves.push(backup);
+  await click('btnExport');
+  for (let i = 0; i < 50 && !fs.existsSync(backup); i++) await sleep(20);
+  record('실제 저장 IPC로 서식 백업', fs.existsSync(backup) && calls.some((c) => c.kind === 'save' && c.options.defaultPath.endsWith('.zip')), calls);
+
+  // 서식 보관함은 사용자 데이터 폴더(IPC로 받은 곳) 안에 둔다
   const stored = fs.readdirSync(userData);
   record('실제 사용자 데이터 IPC와 서식 보관함 위치', stored.includes('forms') || stored.includes('form-library'), stored);
 

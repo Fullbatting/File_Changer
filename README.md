@@ -30,14 +30,6 @@ Electron + Node.js + JavaScript로 만든 데스크톱 프로그램입니다. �
 
 담당자 · 직위 · 담당자 번호(암환자 의료비 서식의 {{담당자}} 등), 기본 부수, 프린터 이름, [한글 연결 확인].
 
-### 예전 메일머지
-
-Word(.docx)·한글(.hwpx) 템플릿의 `{{변수}}`를 엑셀 각 행으로 채워 파일로 만드는 예전 기능도 [예전 메일머지] 화면에 그대로 있습니다.
-
-- **직접 입력**: 변수마다 값을 한 번씩 입력해 문서 1건을 생성합니다.
-- **데이터 파일로 일괄 생성**: 엑셀/CSV(또는 한글 문서 속 표)를 불러오면 각 행이 문서 한 개가 됩니다. 템플릿 변수와 데이터 컬럼은 동의어 사전 + 편집거리 기반 자동 매핑으로 연결됩니다. 생성 전에 빈 값과 결과 파일 이름을 미리 보여 주고, 지정한 컬럼 값으로 이름 지어 한 폴더에 저장합니다.
-- **동의어 사전**: "성명"↔"이름"처럼 같은 뜻의 이름을 자동 매핑에서 바로 잇습니다. [📖 동의어 사전 관리]에서 한 줄에 한 그룹(쉼표 구분)씩 고칩니다.
-
 ### 한글 연결 점검 (Windows)
 
 `tools\한글연결점검.bat`: 사용하실 PC에서 한글 자동 조작(변환·PDF·인쇄)이 되는지 확인합니다. 서식 파일(.hwp/.hwpx)을 bat 위로 끌어다 놓으면 그 서식을 .hwpx로 바꾸고, 메일머지 필드를 가짜 예시 값으로 채워 PDF로 만들어 `한글연결점검_결과` 폴더에 둡니다. `점검보고서.txt`에 한글 버전, 보안 모듈 등록 여부, 단계별 결과가 나옵니다.
@@ -51,7 +43,7 @@ Word(.docx)·한글(.hwpx) 템플릿의 `{{변수}}`를 엑셀 각 행으로 채
    - 최초 실행 시 필요한 패키지와 프로그램 실행 엔진(Electron, 약 100MB)을 자동으로 내려받습니다 (인터넷 연결 필요, 몇 분 정도 소요).
    - 이후 실행부터는 이미 설치된 패키지를 빠르게 확인만 하고 바로 프로그램이 열립니다 (보통 몇 초 이내). 업데이트로 새 패키지나 새 실행 엔진 버전이 필요해진 경우에도 자동으로 함께 설치됩니다.
    - 인터넷 연결이 없는 상태에서 실행하면, 이미 설치되어 있던 패키지 그대로 프로그램을 계속 엽니다.
-   - 회사망처럼 외부 사이트가 제한된 곳에서는 최초 설치 때 `registry.npmjs.org`(패키지), `cdn.sheetjs.com`(엑셀 읽기 라이브러리), `github.com`과 GitHub 파일 서버(실행 엔진) 접속이 허용되어 있어야 합니다.
+   - 회사망처럼 외부 사이트가 제한된 곳에서는 최초 설치 때 `registry.npmjs.org`(패키지), `cdn.sheetjs.com`(.hwp 읽기 라이브러리), `github.com`과 GitHub 파일 서버(실행 엔진) 접속이 허용되어 있어야 합니다.
 
 > **사전 준비**: PC에 [Node.js](https://nodejs.org/) **22.12 이상** (LTS 버전 권장)이 설치되어 있어야 합니다. `run.bat` 실행 시 Node.js가 없거나 버전이 낮으면 안내 메시지가 표시됩니다.
 >
@@ -74,15 +66,15 @@ npm install                             # 의존성 설치
 node node_modules/electron/install.js   # Electron 실행 파일 내려받기 (Electron 42부터 npm install이 자동으로 받지 않음)
 npm start                               # 앱 실행 (electron .)
 npm test                                # 단위 테스트 + 회귀 시나리오 + 보안 시나리오 (Linux 서버에서는 xvfb-run -a npm test)
-npm run test:unit                       # 판단 로직 단위 테스트(Electron 없이): 메일머지 필드·서식 보관함·채우기/인쇄·데이터 파일·자동 매핑·서식 엔진·한글 자동 조작 스크립트
-npm run test:legacy                     # 화면 시나리오(서식 등록 → 출력 → 인적사항 지움, 예전 메일머지, 한글 HWPX 표·템플릿, 전체 기능 점검 3단계). Linux 서버에서는 xvfb-run -a
-npm run test:e2e                        # 보안 시나리오: 실제 main.js 창의 격리·CSP·IPC 발신자 확인, 악성 변수 이름이 든 HWPX 템플릿. Linux 서버에서는 xvfb-run -a
+npm run test:unit                       # 판단 로직 단위 테스트(Electron 없이): 메일머지 필드·서식 보관함·채우기/인쇄·서식 엔진·한글 자동 조작 스크립트
+npm run test:legacy                     # 화면 시나리오(서식 등록 → 출력 → 인적사항 지움). Linux 서버에서는 xvfb-run -a
+npm run test:e2e                        # 보안 시나리오: 실제 main.js 창의 격리·CSP·IPC 발신자 확인. Linux 서버에서는 xvfb-run -a
 ```
 
 ## 앱 보안
 
 - 앱 페이지는 Node 통합을 끄고 컨텍스트를 격리합니다(`app-security.js`). 페이지 스크립트를 금지하는 CSP를 두고, 팝업과 일반 페이지 이동을 막습니다. 파일 대화상자·사용자 데이터 폴더 같은 IPC는 앱의 메인 창·메인 프레임에서 온 요청만 받습니다.
-- 앱 코드(`renderer.js` 이하)는 `preload.js`가 index.html에서만 불러오며, Node를 쓸 수 있는 **샌드박스 밖의 격리된 preload 세계**에서 실행됩니다. 전체 앱을 샌드박스화한 설계는 아니므로 화면에 글자를 넣을 때는 늘 텍스트로 넣습니다(`ui-dom.js`). 템플릿의 변수 이름도 HTML이 아닌 텍스트로 표시합니다.
+- 앱 코드(`renderer.js` 이하)는 `preload.js`가 index.html에서만 불러오며, Node를 쓸 수 있는 **샌드박스 밖의 격리된 preload 세계**에서 실행됩니다. 전체 앱을 샌드박스화한 설계는 아니므로 화면에 글자를 넣을 때는 늘 텍스트로 넣습니다(`ui-dom.js`).
 - Electron의 일부 특수 페이지 이동(예: `about:blank`)은 이동 차단을 거치지 않을 수 있으나, 그 페이지에서는 앱을 초기화하지 않고 IPC도 허용하지 않습니다.
 
 ## 코드 구성
@@ -103,24 +95,15 @@ npm run test:e2e                        # 보안 시나리오: 실제 main.js �
 | `hwp-reader.js` | 구형 .hwp 읽기(표, 메일머지 필드, 서류 목차) |
 | `hwpx-xml.js` · `form-model.js` | 한글 .hwpx를 원문 위치를 기억하는 표·칸·문단 모델로 읽기 |
 | `form-recognize.js` · `field-dictionary.js` · `form-fill.js` | 기입 위치 인식({{필드}}·머리글 옆 빈 칸 …) → 입력 항목 연결 → 원문 XML의 그 자리만 바꿔 채우기 |
-| `tab2.js` · `common.js` | 예전 메일머지 화면 · 화면 공통 도우미(로그·확인 창·동의어 사전 창) |
-| `merge-template.js` · `data-file.js` · `table-reader.js` · `auto-match.js` · `synonyms.js` · `file-utils.js` | 예전 메일머지의 템플릿 치환 · 데이터 파일 읽기 · 헤더 찾기 · 자동 매핑 · 동의어 사전 · 파일 도우미 |
+| `common.js` | 진행 기록·오류 알림 |
 
-## 지원 파일 형식
+## 지원 서식 형식
 
-| 기능 | 지원 확장자 |
-| --- | --- |
-| 메일머지 템플릿 | `.docx`, `.dotx`, `.hwpx`, `.hwpt` |
-| 메일머지 일괄 생성 데이터 | `.xlsx`, `.xls`, `.xlsm`, `.csv`, `.hwpx`, `.hwpt`, `.hwp` |
-
-- CSV는 UTF-8(BOM 포함/미포함)·UTF-16(BOM)과 Windows 한글 기본 인코딩(CP949/EUC-KR)을 자동 판별하여 읽습니다. 확장자와 실제 내용이 다르면(이름만 .xlsx인 CSV 등) 내용에 맞춰 읽고 알려줍니다.
-- 한글(`.hwpx`, `.hwp`) 문서는 **문서 안의 표**를 데이터로 읽습니다. 표가 여러 개면 "표 1", "표 2"...로 나뉘어 엑셀의 시트처럼 고를 수 있고, 결재란처럼 작은 표가 앞에 있어도 행이 가장 많은 표가 기본으로 선택됩니다. 병합된 셀은 왼쪽 위 칸에 값을 두되, 여러 행을 세로로 합친 셀("부서" 등)은 각 행에 같은 값을 채워 넣어 행마다 값이 빠지지 않게 합니다(2단 헤더도 이 덕분에 아래 헤더 행이 그대로 인식됩니다). 셀 안의 줄바꿈은 그대로 유지되고, 셀 속에 들어 있는 다른 표는 별도의 표로 분리됩니다.
-- 구형 `.hwp`(한글 2002 이후의 HWP 5.0 바이너리 형식)도 같은 방식으로 표를 읽습니다. 추가 프로그램이나 한글 설치 없이 직접 해석하며, 표 캡션·글상자·각주는 표 데이터에 섞이지 않습니다. 다만 다음 문서는 읽을 수 없어 안내 메시지가 표시됩니다: 암호가 걸린 문서, 배포용으로 저장된 문서(내용이 암호화됨), 한글 97 이전(HWP 3.0) 문서.
-- `.hwp`는 **메일머지 템플릿으로는 쓸 수 없습니다.** 결과 문서를 구형 바이너리 형식으로 다시 써야 하는데, 한글 프로그램에서 정상적으로 열리는지 확인할 수 없어 손상된 문서가 만들어질 위험이 있기 때문입니다. 한글 프로그램에서 "다른 이름으로 저장 > HWPX"로 저장한 뒤 그 파일을 템플릿으로 쓰세요.
+- 한글 `.hwpx`(.hwpt)는 그대로 채웁니다. 구형 `.hwp`(HWP 5.0)는 한글 없이 필드·서류 목차를 읽고, 채울 때는 설치된 한글로 `.hwpx`로 바꿔 보관합니다.
+- 읽을 수 없는 문서: 암호가 걸린 문서, 배포용으로 저장된 문서(내용이 암호화됨), 한글 97 이전(HWP 3.0) 문서.
 
 ## 주요 오픈소스 라이브러리
 
-- [xlsx (SheetJS)](https://git.sheetjs.com/sheetjs/sheetjs) 0.20.3 — 엑셀/CSV 읽기(Extract) (Apache-2.0). npm 레지스트리의 xlsx는 0.18.5에서 업데이트가 멈춰 보안 수정이 없으므로, SheetJS 공식 배포처(`cdn.sheetjs.com`)에서 설치합니다.
-- [docxtemplater](https://github.com/open-xml-templating/docxtemplater) — Word 템플릿 메일머지 (MIT)
-- [pizzip](https://github.com/open-xml-templating/pizzip) — zip/OOXML 처리 (MIT)
-- [iconv-lite](https://github.com/ashtuchkin/iconv-lite) — CSV 인코딩 변환 (MIT)
+- [xlsx (SheetJS)](https://git.sheetjs.com/sheetjs/sheetjs) 0.20.3 — 구형 .hwp(OLE 복합 문서) 읽기에 쓰는 CFB 모듈 (Apache-2.0). npm 레지스트리의 xlsx는 0.18.5에서 업데이트가 멈춰 보안 수정이 없으므로, SheetJS 공식 배포처(`cdn.sheetjs.com`)에서 설치합니다.
+- [pizzip](https://github.com/open-xml-templating/pizzip) — .hwpx(zip) 읽고 쓰기 (MIT)
+

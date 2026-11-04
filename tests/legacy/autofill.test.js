@@ -174,9 +174,7 @@ app.whenReady().then(async () => {
   const afterImport = await js(`document.querySelectorAll('#formsTableBody tr').length`);
   record('백업 내보내기 → 하나 지움 → 가져오면 다시 3개', fs.existsSync(backup) && afterDelete === 2 && afterImport === 3, `${afterDelete} → ${afterImport}`);
 
-  /* ---------- 10. 예전 메일머지 화면도 그대로 ---------- */
-  await js(`document.querySelector('[data-screen="tab2"]').click(); true;`);
-  record('예전 메일머지 화면으로 바꿀 수 있음', (await visible('tab2')) && !(await visible('screenPrint')), '');
+  /* ---------- 10. 격리 ---------- */
   const pageGlobals = await win.webContents.executeJavaScript('({ require: typeof require, process: typeof process })');
   record('웹 페이지 쪽에는 Node가 노출되지 않음(서식 자동 기입도 격리 세계에서 동작)', pageGlobals.require === 'undefined' && pageGlobals.process === 'undefined', JSON.stringify(pageGlobals));
 
