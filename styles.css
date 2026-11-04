@@ -1,4 +1,4 @@
-/* styles.css - 문서 변환 및 메일머지 자동화 프로그램 */
+/* styles.css - 화면 틀(머리·탭·진행 기록)과 탭1 문서 양식 변환기. 탭2 서식 자동 기입은 app.css */
 
 :root {
   --color-bg: #f4f6f9;
@@ -341,41 +341,6 @@ table.mapping-table select {
   padding: 14px 4px;
 }
 
-/* ---------- 모드 토글 (메일머지: 직접 입력 / 일괄 생성) ---------- */
-.mode-toggle {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.mode-toggle label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 9px 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  background: #fff;
-  transition: all 0.15s ease;
-}
-
-.mode-toggle label:hover {
-  border-color: var(--color-primary);
-}
-
-.mode-toggle input[type="radio"] {
-  accent-color: var(--color-primary);
-}
-
-.mode-toggle label:has(input[type="radio"]:checked) {
-  border-color: var(--color-primary);
-  background: var(--color-primary-light);
-  color: var(--color-primary-dark);
-}
-
 /* ---------- 프리셋 관리 ---------- */
 .preset-row {
   display: flex;
@@ -512,38 +477,6 @@ table.mapping-table select {
 }
 
 .synonym-textarea:focus {
-  outline: none;
-  border-color: var(--color-primary);
-}
-
-/* ---------- Dynamic form (mail merge variables) ---------- */
-.var-form-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 12px;
-}
-
-.var-field label {
-  display: block;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--color-text-muted);
-  margin-bottom: 4px;
-}
-
-.var-field label .tag {
-  color: var(--color-primary);
-}
-
-.var-field input {
-  width: 100%;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border);
-  font-size: 13px;
-}
-
-.var-field input:focus {
   outline: none;
   border-color: var(--color-primary);
 }

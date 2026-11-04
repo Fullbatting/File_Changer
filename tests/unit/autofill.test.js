@@ -233,6 +233,23 @@ test('채우기(메일머지 필드): 값·연도 맞춤·고정 글자·비워 
   assert.strictEqual((xml.match(/fieldBegin/g) || []).length, 17);
 });
 
+test('채우기(메일머지 필드): 글상자 안·글상자 속 글상자·표 칸 안 글상자의 필드도 한 번씩만 고친다(겹치는 편집 없음)', () => {
+  // 한글은 글상자를 <hp:rect> > <hp:drawText> > <hp:subList> > <hp:p>로, 바깥 문단의 런 안에 둔다
+  const box = (...ps) => `<hp:run charPrIDRef="0"><hp:rect id="9"><hp:drawText><hp:subList>${ps.join('')}</hp:subList></hp:drawText></hp:rect></hp:run>`;
+  const cell = (...ps) => `<hp:run charPrIDRef="0"><hp:tbl rowCnt="1" colCnt="1"><hp:tr><hp:tc><hp:subList>${ps.join('')}</hp:subList><hp:cellAddr colAddr="0" rowAddr="0"/><hp:cellSpan colSpan="1" rowSpan="1"/></hp:tc></hp:tr></hp:tbl></hp:run>`;
+  const buf = hwpxWith([
+    P(T('신청인 '), box(P(T('성명 '), F('이름'))), T(' 끝')),
+    P(box(P(T('연락처 '), box(P(F('연락처')))))),
+    P(cell(P(T('주소 '), box(P(F('주소')), P(T('2026년 '), F('월1'), F('월2'), T('월')))))),
+  ]);
+  const r = job.fillForm({ mapping: {} }, buf, INPUT);
+  assert.strictEqual(r.mode, 'fields');
+  assert.strictEqual(r.filled, 5);
+  const t = textOf(r.buffer);
+  assert.strictEqual(t, '신청인 성명 홍길동\n 끝\n연락처 010-0000-0000\n\n\n주소 [예시 주소]\n2027년 08월\n\n\n');
+  assert.strictEqual(t.split('홍길동').length, 2);
+});
+
 test('채우기(필드 없는 서식): 자동 인식으로 표 칸을 채운다', () => {
   const buf = buildHwpx([{ cells: [{ row: 0, col: 0, text: '성명' }, { row: 0, col: 1, text: '' }, { row: 0, col: 2, text: '주민등록번호' }, { row: 0, col: 3, text: '' }] }]);
   const r = job.fillForm({ mapping: {} }, buf, INPUT);

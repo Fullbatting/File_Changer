@@ -1,4 +1,4 @@
-// Electron e2e regression test for the renderer.js -> common.js/tab1.js/tab2.js split.
+// 문서 양식 변환기 기본 흐름 회귀 테스트: 분석·동의어 자동 매핑·필수 칸 확인·저장·프리셋·동의어 사전 창
 // Run with: xvfb-run -a <repo>/node_modules/.bin/electron --no-sandbox --disable-gpu <this file>
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
@@ -11,10 +11,8 @@ const FIX = process.env.LEGACY_FIX;
 let win;
 let openFileQueue = []; // array of {paths} to return in order for dialog:openFile
 let saveFileQueue = [];
-let selectFolderQueue = [];
 
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-convert-userdata-'));
-const batchOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'doc-convert-batchout-'));
 
 const LOG_FILE = path.join(FIX, 'e2e-result.log');
 fs.writeFileSync(LOG_FILE, '');
@@ -23,7 +21,9 @@ function flog(msg) {
   console.log(msg);
 }
 process.on('unhandledRejection', (err) => {
+  // 시나리오 중 예외: 기록하고 바로 끝낸다(멈춘 채 시간 초과까지 기다리지 않도록)
   flog('UNHANDLED REJECTION: ' + (err && err.stack ? err.stack : err));
+  app.exit(2);
 });
 
 ipcMain.handle('dialog:openFile', async () => {
@@ -35,10 +35,6 @@ ipcMain.handle('dialog:saveFile', async () => {
   return saveFileQueue.shift();
 });
 ipcMain.handle('app:getUserDataPath', () => userDataDir);
-ipcMain.handle('dialog:selectFolder', async () => {
-  if (selectFolderQueue.length === 0) return null;
-  return selectFolderQueue.shift();
-});
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -178,105 +174,8 @@ async function run() {
   const presetOptionCount = await js("document.getElementById('presetSelect').options.length");
   record('탭1 프리셋 저장 후 드롭다운에 추가됨', presetOptionCount >= 2, String(presetOptionCount));
 
-  /* ---------------- TAB 2: manual mode (docx) ---------------- */
-
-  await js(`document.querySelector('.tab-btn[data-tab="tab2"]').click()`);
-  await sleep(100);
-
-  openFileQueue.push([path.join(FIX, 'template.docx')]);
-  await js("document.getElementById('dropTemplate').click()");
-  await sleep(200);
-
-  await js("document.getElementById('btnExtractVars').click()");
-  await sleep(200);
-
-  const extractStatus = await js("document.getElementById('extractStatus').textContent");
-  record('탭2 템플릿 변수 추출 (docx)', extractStatus.includes('2개 변수') || extractStatus.includes('변수 발견'), extractStatus);
-
-  await js(`
-    document.querySelectorAll('#varFormGrid input').forEach(inp => {
-      inp.value = inp.dataset.varName === '이름' ? '테스트유저' : '2026-10-17';
-      inp.dispatchEvent(new Event('input'));
-    });
-  `);
-
-  const manualSavePath = path.join(FIX, 'manual_result.docx');
-  saveFileQueue.push(manualSavePath);
-  await js("document.getElementById('btnGenerateDocx').click()");
-  await sleep(300);
-
-  const manualExists = fs.existsSync(manualSavePath);
-  record('탭2 직접입력 모드 문서 생성됨', manualExists, manualSavePath);
-  if (manualExists) {
-    const PizZip = require(path.join(REPO, 'node_modules', 'pizzip'));
-    const zip = new PizZip(fs.readFileSync(manualSavePath));
-    const xml = zip.file('word/document.xml').asText();
-    const substituted = xml.includes('테스트유저') && !xml.includes('{{이름}}');
-    record('탭2 직접입력 모드 변수 치환 정확성', substituted, xml.slice(0, 300));
-  }
-
-  /* ---------------- TAB 2: batch mode ---------------- */
-
-  await js(`
-    document.querySelector('input[name="mmMode"][value="batch"]').click();
-  `);
-  await sleep(100);
-
-  openFileQueue.push([path.join(FIX, 'mmData.xlsx')]);
-  await js("document.getElementById('dropMailMergeData').click()");
-  await sleep(200);
-
-  await js("document.getElementById('btnLoadMailMergeData').click()");
-  await sleep(200);
-
-  const mmStatus = await js("document.getElementById('mailMergeDataStatus').textContent");
-  record('탭2 배치 데이터 불러오기', mmStatus.includes('2행'), mmStatus);
-
-  const mmMapping = await js(`
-    Array.from(document.querySelectorAll('#mailMergeMappingTableBody select')).map(s => [s.dataset.templateVar, s.value])
-  `);
-  const mmMappingOk = mmMapping.some(([v, c]) => v === '이름' && c === '이름') && mmMapping.some(([v, c]) => v === '날짜' && c === '날짜');
-  record('탭2 배치 변수<->컬럼 자동 매핑 (exact)', mmMappingOk, JSON.stringify(mmMapping));
-
-  const mmPreviewCells = await js(`
-    Array.from(document.querySelectorAll('#mailMergeMappingTableBody tr')).map(tr => {
-      const varCell = tr.querySelector('td');
-      const preview = tr.querySelector('.mapping-preview-cell');
-      return [varCell ? varCell.textContent : null, preview ? preview.textContent : null];
-    })
-  `);
-  const datePreview = mmPreviewCells.find(([v]) => v === '{{날짜}}');
-  record(
-    '탭2 배치 매핑 미리보기: "날짜" 변수에 사람이 읽기 쉬운 날짜 형식 표시',
-    !!datePreview && datePreview[1] === '2026-01-15 / 2026-02-20',
-    JSON.stringify(datePreview)
-  );
-
-  selectFolderQueue.push(batchOutDir);
-  await js("document.getElementById('btnGenerateBatch').click()");
-  await sleep(300);
-
-  const batchReviewVisible = await js("document.getElementById('mailMergeReviewModal').hidden === false");
-  record('탭2 배치 생성 확인 모달 표시', batchReviewVisible, '');
-
-  await js("document.getElementById('mailMergeReviewProceed').click()");
-  await sleep(500);
-
-  const batchFiles = fs.readdirSync(batchOutDir).filter((f) => f.endsWith('.docx'));
-  record('탭2 배치 생성: 데이터 2행 -> 문서 2개', batchFiles.length === 2, JSON.stringify(batchFiles));
-
-  if (batchFiles.length === 2) {
-    const PizZip = require(path.join(REPO, 'node_modules', 'pizzip'));
-    const sample = new PizZip(fs.readFileSync(path.join(batchOutDir, batchFiles[0])));
-    const xml = sample.file('word/document.xml').asText();
-    const dateFormatOk = xml.includes('2026-01-15') || xml.includes('2026-02-20');
-    record('탭2 배치 생성: 날짜 값이 사람이 읽기 쉬운 형식으로 치환됨', dateFormatOk, xml.slice(0, 300));
-  }
-
   /* ---------------- 동의어 사전 모달 ---------------- */
 
-  await js(`document.querySelector('.tab-btn[data-tab="tab1"]').click()`);
-  await sleep(100);
   await js("document.getElementById('btnManageSynonymsTab1').click()");
   await sleep(100);
   const synonymModalVisible = await js("document.getElementById('synonymManagerModal').hidden === false");

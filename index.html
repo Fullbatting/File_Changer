@@ -15,7 +15,6 @@
     <div class="tab-bar">
       <button class="tab-btn active" data-tab="tab1">1. 문서 양식 변환기</button>
       <button class="tab-btn" data-tab="tabAutofill">2. 서식 자동 기입</button>
-      <button class="tab-btn" data-tab="tab2">3. 메일머지 (예전 방식)</button>
     </div>
   </header>
 
@@ -181,123 +180,140 @@
 
     </section>
 
-    <!-- ============ TAB: 서식 자동 기입 (서류 출력 · 서식 관리 · 설정) ============ -->
+    <!-- ============ TAB 2: 서식 자동 기입 (서류 출력 · 서식 관리 · 설정) ============ -->
     <section id="tabAutofill" class="tab-panel fa">
-      <div class="fa-header">
-        <h2 class="fa-title">서식 자동 기입</h2>
-        <nav class="fa-nav" aria-label="화면">
-          <button type="button" data-screen="screenPrint" aria-current="page">서류 출력</button>
-          <button type="button" data-screen="screenForms">서식 관리</button>
-          <button type="button" data-screen="screenSettings">설정</button>
-        </nav>
-        <div class="fa-privacy"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>인적사항은 저장하지 않습니다 · 출력하면 지웁니다</div>
+      <div class="fa-subnav">
+        <nav class="fa-nav fa-nav-row" aria-label="화면">
+      <button type="button" data-screen="screenPrint" aria-current="page"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6"></path><rect x="3" y="9" width="18" height="8" rx="2"></rect><path d="M6 14h12v7H6z"></path></svg><span>서류 출력</span></button>
+      <button type="button" data-screen="screenForms"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M9 13h6M9 17h4"></path></svg><span>서식 관리</span></button>
+      <button type="button" data-screen="screenSettings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"></path></svg><span>설정</span></button>
+    </nav>
+        <div class="fa-privacy-inline"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>인적사항은 저장하지 않습니다 · 출력하면 바로 지웁니다</div>
       </div>
+
       <!-- ① 서류 출력: 인적사항 → 제출 기관 → 신청 구분 → 서류 → 출력 -->
-      <section id="screenPrint" class="fa-screen">
-        <div class="fa-columns">
-          <section class="fa-card" aria-labelledby="hPerson">
-            <div class="fa-card-head">
-              <span class="fa-step" aria-hidden="true">1</span>
-              <h2 id="hPerson">인적사항</h2>
-              <span class="fa-spacer"></span>
+      <section id="screenPrint" class="fa-screen" aria-labelledby="tPrint">
+        <header class="fa-page-head">
+          <div>
+            <h2 id="tPrint">서류 출력</h2>
+            <p>환자 인적사항을 넣고 제출 기관과 서류를 고르면, 서식에 채워 바로 인쇄합니다.</p>
+          </div>
+        </header>
+
+        <div class="fa-print-layout">
+          <section class="fa-card fa-person" aria-labelledby="hPerson">
+            <div class="fa-card-row fa-card-head">
+              <h2 class="fa-card-title" id="hPerson"><span class="fa-step" aria-hidden="true">1</span>인적사항</h2>
               <button type="button" class="fa-btn small" id="btnClearPerson">새로 입력(모두 지우기)</button>
             </div>
             <div id="personFields" class="fa-fields"></div>
-            <div id="careBlock" hidden>
-              <p class="fa-subhead">진료 정보 <span class="fa-hint">고른 서류에 있는 칸만 보입니다</span></p>
+            <div id="careBlock" class="fa-group" hidden>
+              <h3 class="fa-subhead">진료 정보 <span class="fa-hint">고른 서류에 있는 칸만 보입니다</span></h3>
               <div id="careFields" class="fa-fields"></div>
             </div>
-            <div id="askBlock" hidden>
-              <p class="fa-subhead">이 서류에만 있는 칸</p>
+            <div id="askBlock" class="fa-group" hidden>
+              <h3 class="fa-subhead">이 서류에만 있는 칸</h3>
               <div id="askFields" class="fa-fields"></div>
             </div>
-            <p id="staffNote" class="fa-note warn" hidden></p>
+            <p id="staffNote" class="fa-callout warn" hidden></p>
           </section>
 
-          <div class="fa-stack">
+          <div class="fa-flow">
             <section class="fa-card" aria-labelledby="hAgency">
-              <div class="fa-card-head">
-                <span class="fa-step" aria-hidden="true">2</span>
-                <h2 id="hAgency">제출 기관</h2>
-                <span class="fa-spacer"></span>
+              <div class="fa-card-row">
+                <h2 class="fa-card-title" id="hAgency"><span class="fa-step" aria-hidden="true">2</span>제출 기관</h2>
                 <span id="agencyNote" class="fa-note"></span>
               </div>
               <div id="agencyChips" class="fa-chips" role="group" aria-label="제출 기관"></div>
-              <div class="fa-card-head">
-                <span class="fa-step" aria-hidden="true">3</span>
-                <h2 id="hApplicant">신청 구분</h2>
+              <div class="fa-card-row fa-divided">
+                <h2 class="fa-card-title" id="hApplicant"><span class="fa-step" aria-hidden="true">3</span>신청 구분</h2>
                 <div class="fa-segment" role="radiogroup" aria-labelledby="hApplicant">
                   <label><input type="radio" name="applicant" value="세대주" checked /><span>세대주</span></label>
                   <label><input type="radio" name="applicant" value="세대원" /><span>세대원</span></label>
                 </div>
-                <span class="fa-hint">환자가 세대주인지 세대원인지</span>
               </div>
             </section>
 
             <section class="fa-card" aria-labelledby="hForms">
-              <div class="fa-card-head">
-                <span class="fa-step" aria-hidden="true">4</span>
-                <h2 id="hForms">출력할 서류</h2>
-                <span class="fa-spacer"></span>
+              <div class="fa-card-row">
+                <h2 class="fa-card-title" id="hForms"><span class="fa-step" aria-hidden="true">4</span>출력할 서류</h2>
                 <span id="formsNote" class="fa-note"></span>
               </div>
               <div id="formList"></div>
             </section>
 
-            <div class="fa-printbar">
-              <div class="summary" id="printSummary"></div>
-              <div class="fa-counter">
-                <span id="copiesLabel">부수</span>
-                <button type="button" id="btnFewer" aria-label="한 부 줄이기">−</button>
-                <output id="copiesValue" aria-labelledby="copiesLabel">1</output>
-                <button type="button" id="btnMore" aria-label="한 부 늘리기">+</button>
+            <section class="fa-printbar" aria-label="출력">
+              <div class="summary" id="printSummary" aria-live="polite"></div>
+              <div class="fa-printbar-actions">
+                <div class="fa-counter">
+                  <span id="copiesLabel">부수</span>
+                  <button type="button" id="btnFewer" aria-label="한 부 줄이기">−</button>
+                  <output id="copiesValue" aria-labelledby="copiesLabel">1</output>
+                  <button type="button" id="btnMore" aria-label="한 부 늘리기">+</button>
+                </div>
+                <button type="button" class="fa-btn" id="btnSaveFilled">한글 파일로 저장</button>
               </div>
-              <button type="button" class="fa-btn" id="btnSaveFilled">한글 파일로 저장</button>
-              <button type="button" class="fa-btn primary big" id="btnPrint">서식 출력</button>
-            </div>
-            <p id="printerNote" class="fa-note"></p>
+              <div class="fa-printbar-go">
+                <button type="button" class="fa-btn primary big" id="btnPrint"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6"></path><rect x="3" y="9" width="18" height="8" rx="2"></rect><path d="M6 14h12v7H6z"></path></svg><span>서식 출력</span></button>
+              </div>
+              <p id="printerNote" class="fa-note"></p>
+            </section>
           </div>
         </div>
       </section>
 
       <!-- ② 서식 관리: 기관별 목록 · 등록 · 검토 · 백업 -->
-      <section id="screenForms" class="fa-screen" hidden>
-        <div class="fa-manage">
-          <nav class="fa-side" id="formsSide" aria-label="기관"></nav>
-          <div class="fa-stack">
-            <div class="fa-card-head">
-              <h2 id="formsTitle" style="font-size: 20px">전체 서식</h2>
-              <span class="fa-spacer"></span>
-              <button type="button" class="fa-btn" id="btnAddFiles">서식 파일 추가</button>
-              <button type="button" class="fa-btn" id="btnAddFolder">폴더째 추가</button>
-              <button type="button" class="fa-btn" id="btnExport">백업 내보내기</button>
-              <button type="button" class="fa-btn" id="btnImport">백업 가져오기</button>
-            </div>
-            <div class="fa-drop" id="formsDrop">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#1D4F91" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M12 12v6"></path><path d="M9 15l3-3 3 3"></path></svg>
-              <div>
-                <strong>한글 서식(.hwp · .hwpx)이나 서식이 든 폴더를 여기로 끌어다 놓으세요</strong>
-                <div class="fa-hint">파일 이름으로 제출 기관 · 지원 종류 · 세대주/세대원을 알아보고, 서식 안의 메일머지 필드({{이름}} 등)를 찾습니다. 원본 파일은 바뀌지 않습니다.</div>
-              </div>
-            </div>
-            <div class="fa-table-wrap">
-              <table class="fa-table">
-                <thead>
-                  <tr><th scope="col">서식</th><th scope="col">지원 종류</th><th scope="col">구분</th><th scope="col">서류</th><th scope="col">필드</th><th scope="col">상태</th><th scope="col"><span class="visually-hidden">작업</span></th></tr>
-                </thead>
-                <tbody id="formsTableBody"></tbody>
-              </table>
-            </div>
-            <p class="fa-note">서식과 필드 연결은 이 PC에만 저장됩니다. 다른 PC에서 쓰려면 [백업 내보내기]로 만든 파일을 그 PC에서 [백업 가져오기]하세요.</p>
+      <section id="screenForms" class="fa-screen" aria-labelledby="tForms" hidden>
+        <header class="fa-page-head">
+          <div>
+            <h2 id="tForms">서식 관리</h2>
+            <p>제출 기관별 한글 서식을 등록하고, 메일머지 필드가 어떻게 채워질지 확인합니다.</p>
           </div>
+          <div class="fa-toolbar">
+            <button type="button" class="fa-btn primary" id="btnAddFiles"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg><span>서식 파일 추가</span></button>
+            <button type="button" class="fa-btn" id="btnAddFolder"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg><span>폴더째 추가</span></button>
+          </div>
+        </header>
+
+        <div class="fa-drop" id="formsDrop">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M12 12v6"></path><path d="M9 15l3-3 3 3"></path></svg>
+          <p><strong>한글 서식(.hwp · .hwpx)이나 서식이 든 폴더를 여기로 끌어다 놓으세요</strong>파일 이름으로 제출 기관 · 지원 종류 · 세대주/세대원을 알아보고, 서식 안의 메일머지 필드({{이름}} 등)를 찾습니다. 원본 파일은 바뀌지 않습니다.</p>
+        </div>
+
+        <section class="fa-card fa-flush" aria-labelledby="formsTitle">
+          <div class="fa-card-row fa-pad">
+            <h2 class="fa-card-title" id="formsTitle">전체 서식</h2>
+            <nav class="fa-filter" id="formsSide" aria-label="제출 기관"></nav>
+          </div>
+          <div class="fa-table-wrap">
+            <table class="fa-table">
+              <thead>
+                <tr><th scope="col">서식</th><th scope="col">지원 종류</th><th scope="col">구분</th><th scope="col">서류</th><th scope="col">필드</th><th scope="col">상태</th><th scope="col"><span class="visually-hidden">작업</span></th></tr>
+              </thead>
+              <tbody id="formsTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <div class="fa-backup">
+          <p class="fa-note">서식과 필드 연결은 이 PC에만 저장됩니다. 다른 PC로 옮길 때는 백업 파일을 쓰세요.</p>
+          <button type="button" class="fa-btn ghost" id="btnExport">백업 내보내기</button>
+          <button type="button" class="fa-btn ghost" id="btnImport">백업 가져오기</button>
         </div>
       </section>
 
       <!-- ③ 설정 -->
-      <section id="screenSettings" class="fa-screen" hidden>
-        <div class="fa-stack" style="max-width: 760px">
+      <section id="screenSettings" class="fa-screen" aria-labelledby="tSettings" hidden>
+        <header class="fa-page-head">
+          <div>
+            <h2 id="tSettings">설정</h2>
+            <p>이 PC에서만 쓰는 값입니다.</p>
+          </div>
+        </header>
+        <div class="fa-settings">
           <section class="fa-card" aria-labelledby="hStaff">
-            <div class="fa-card-head"><h2 id="hStaff">담당자</h2><span class="fa-hint">암환자 의료비 서식의 {{담당자}} · {{직위}} · {{담당자 번호}}에 들어갑니다</span></div>
+            <h2 class="fa-card-title" id="hStaff">담당자</h2>
+            <p class="fa-note">암환자 의료비 서식의 {{담당자}} · {{직위}} · {{담당자 번호}}에 들어갑니다.</p>
             <div class="fa-fields">
               <div class="fa-field"><label for="setStaffName">담당자</label><input id="setStaffName" autocomplete="off" /></div>
               <div class="fa-field"><label for="setStaffTitle">직위</label><input id="setStaffTitle" autocomplete="off" /></div>
@@ -305,116 +321,22 @@
             </div>
           </section>
           <section class="fa-card" aria-labelledby="hPrinter">
-            <div class="fa-card-head"><h2 id="hPrinter">인쇄</h2></div>
+            <h2 class="fa-card-title" id="hPrinter">인쇄</h2>
             <div class="fa-fields">
               <div class="fa-field"><label for="setCopies">기본 부수</label><input id="setCopies" type="number" min="1" max="99" /></div>
               <div class="fa-field"><label for="setPrinter">프린터 이름</label><input id="setPrinter" placeholder="비워 두면 기본 프린터" autocomplete="off" /></div>
             </div>
-            <div class="fa-card-head">
+            <div class="fa-card-row fa-divided">
               <button type="button" class="fa-btn" id="btnProbeHancom">한글 연결 확인</button>
               <span id="probeResult" class="fa-note"></span>
             </div>
           </section>
-          <div class="fa-card-head">
+          <div class="fa-card-row">
             <button type="button" class="fa-btn primary" id="btnSaveSettings">설정 저장</button>
-            <span id="settingsSaved" class="fa-note"></span>
+            <span id="settingsSaved" class="fa-note ok" role="status"></span>
           </div>
         </div>
       </section>
-    </section>
-
-    <!-- ============ TAB 3: 메일머지 (예전 방식 — 엑셀 각 행으로 문서 만들기) ============ -->
-    <section id="tab2" class="tab-panel">
-
-      <div class="card">
-        <h2><span class="step-badge">1</span>Word / 한글(HWPX) 템플릿 파일 선택</h2>
-        <p class="desc">{{변수명}} 형식의 플레이스홀더가 포함된 .docx, .dotx, .hwpx 또는 .hwpt 템플릿 파일을 선택하세요. (구형 .hwp 바이너리 포맷은 지원하지 않습니다 — 한글에서 "다른 이름으로 저장 > HWPX"로 변환 후 이용하세요.)</p>
-
-        <div id="dropTemplate" class="dropzone">
-          <div class="dz-title">📝 Word / 한글 템플릿 (.docx, .dotx, .hwpx, .hwpt)</div>
-          <div class="dz-hint">클릭 또는 파일을 여기로 드래그하세요</div>
-          <div id="fileNameTemplate" class="dz-file"></div>
-        </div>
-
-        <div class="btn-row" style="margin-top:14px;">
-          <button id="btnExtractVars" class="btn primary">🔎 변수 자동 추출</button>
-          <span id="extractStatus" class="pill warn">대기 중</span>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2><span class="step-badge">2</span>입력 방식 선택</h2>
-        <p class="desc">문서 하나만 만들 때는 "직접 입력", 엑셀/CSV의 여러 행마다 문서를 한 번에 만들 때는 "데이터 파일로 일괄 생성(메일머지)"을 선택하세요.</p>
-        <div class="mode-toggle" id="mmModeToggle">
-          <label><input type="radio" name="mmMode" value="manual" checked /> ✏️ 직접 입력 (1건)</label>
-          <label><input type="radio" name="mmMode" value="batch" /> 📊 데이터 파일로 일괄 생성 (메일머지)</label>
-        </div>
-      </div>
-
-      <div class="card" id="manualInputCard">
-        <h2><span class="step-badge">3</span>변수 값 입력</h2>
-        <p class="desc">추출된 변수마다 실제로 문서에 기입할 값을 입력하세요.</p>
-        <div id="varFormGrid" class="var-form-grid">
-          <div class="empty-hint">먼저 [변수 자동 추출]을 실행하세요.</div>
-        </div>
-      </div>
-
-      <div class="card" id="batchInputCard" hidden>
-        <h2><span class="step-badge">3</span>데이터 파일 선택 및 컬럼 매핑</h2>
-        <p class="desc">엑셀/CSV(또는 한글 문서 속 표)의 각 행이 문서 한 개가 됩니다. 컬럼명이 템플릿 변수명과 같거나 비슷하면 자동으로 매핑됩니다.</p>
-
-        <div id="dropMailMergeData" class="dropzone">
-          <div class="dz-title">📊 데이터 파일 (.xlsx, .xls, .xlsm, .csv, .hwpx, .hwp)</div>
-          <div class="dz-hint">클릭 또는 파일을 여기로 드래그하세요</div>
-          <div id="fileNameMailMergeData" class="dz-file"></div>
-          <div id="sheetRowMailMerge" class="sheet-row" hidden>
-            <label for="sheetSelectMailMerge">시트 선택</label>
-            <select id="sheetSelectMailMerge"></select>
-          </div>
-        </div>
-
-        <div class="btn-row" style="margin-top:14px;">
-          <button id="btnLoadMailMergeData" class="btn primary">🔍 데이터 불러오기</button>
-          <span id="mailMergeDataStatus" class="pill warn">대기 중</span>
-        </div>
-
-        <div class="table-wrap" style="margin-top:14px;">
-          <table class="mapping-table" id="mailMergeMappingTable">
-            <thead>
-              <tr>
-                <th style="width:30%;">템플릿 변수</th>
-                <th style="width:35%;">데이터 컬럼 매핑</th>
-                <th style="width:35%;" title="선택된 데이터 컬럼의 실제 값(앞 2행)을 보여줍니다.">미리보기</th>
-              </tr>
-            </thead>
-            <tbody id="mailMergeMappingTableBody">
-              <tr><td colspan="3" class="empty-hint">먼저 [변수 자동 추출]과 [데이터 불러오기]를 실행하세요.</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="preset-row" style="margin-top:14px;">
-          <label for="filenameColumnSelect">결과 파일명 기준 컬럼</label>
-          <select id="filenameColumnSelect">
-            <option value="">-- 행 번호 사용 --</option>
-          </select>
-        </div>
-        <p class="desc" style="margin-top:6px;">선택한 컬럼의 값으로 각 결과 파일 이름을 짓습니다 (예: "홍길동.docx"). 비워두면 행 번호로 이름 짓습니다.</p>
-
-        <div class="btn-row">
-          <button id="btnManageSynonymsTab2" class="btn ghost">📖 동의어 사전 관리</button>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2><span class="step-badge">4</span>자동 기입 및 저장</h2>
-        <p class="desc" id="generateCardDesc">입력한 값으로 템플릿 변수를 치환하여 결과 문서(.docx 또는 .hwpx)를 생성합니다.</p>
-        <div class="btn-row">
-          <button id="btnGenerateDocx" class="btn primary">📄 문서 생성 및 저장</button>
-          <button id="btnGenerateBatch" class="btn primary" hidden>📦 일괄 생성 실행</button>
-        </div>
-      </div>
-
     </section>
 
   </main>
@@ -454,24 +376,6 @@
       <div class="btn-row modal-btn-row">
         <button id="convertReviewCancel" class="btn ghost">취소하고 수정</button>
         <button id="convertReviewProceed" class="btn primary">그대로 저장</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 메일머지 일괄 생성 확인(검증 + 미리보기) 모달 -->
-  <div id="mailMergeReviewModal" class="modal-overlay" hidden>
-    <div class="modal-card modal-card-wide">
-      <h3>일괄 생성 확인</h3>
-      <div id="mailMergeReviewSummary" class="review-summary"></div>
-      <div class="table-wrap review-preview-wrap">
-        <table class="mapping-table">
-          <thead><tr id="mailMergeReviewTableHead"></tr></thead>
-          <tbody id="mailMergeReviewTableBody"></tbody>
-        </table>
-      </div>
-      <div class="btn-row modal-btn-row">
-        <button id="mailMergeReviewCancel" class="btn ghost">취소하고 수정</button>
-        <button id="mailMergeReviewProceed" class="btn primary">그대로 생성</button>
       </div>
     </div>
   </div>
