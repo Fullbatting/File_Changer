@@ -4,10 +4,10 @@
 
 const { ipcRenderer } = require('electron');
 const path = require('path');
-const { openLibrary } = require('./form-library.js');
-const { loadSettings } = require('./settings.js');
-const { cleanupTemp } = require('./print-job.js');
-const { runHancom } = require('./hancom.js');
+const { openLibrary } = require('../autofill/form-library.js');
+const { loadSettings } = require('../autofill/settings.js');
+const { cleanupTemp } = require('../autofill/print-job.js');
+const { runHancom } = require('../autofill/hancom.js');
 const { log } = require('./common.js');
 
 /** 화면들이 함께 쓰는 상태: 보관함·설정, 한글 실행기, 그리고 바뀌었을 때 알림 */

@@ -1,7 +1,7 @@
 const path = require('path');
 const { pathToFileURL } = require('url');
 
-const appUrl = pathToFileURL(path.join(__dirname, 'index.html')).href;
+const appUrl = pathToFileURL(path.join(__dirname, '..', 'renderer', 'index.html')).href;
 
 function webPreferences() {
   return {

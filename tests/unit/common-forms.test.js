@@ -4,10 +4,10 @@
 // 글자는 모두 가짜 예시다. node tests/unit/common-forms.test.js
 
 const assert = require('assert');
-const { modelFromHwpx } = require('../../form-model.js');
-const { recognize } = require('../../form-recognize.js');
-const { resolveValues, groupKind, matchLabel } = require('../../field-dictionary.js');
-const { fillHwpx } = require('../../form-fill.js');
+const { modelFromHwpx } = require('../../src/engine/form-model.js');
+const { recognize } = require('../../src/engine/form-recognize.js');
+const { resolveValues, groupKind, matchLabel } = require('../../src/engine/field-dictionary.js');
+const { fillHwpx } = require('../../src/engine/form-fill.js');
 const { buildHwpx } = require('./hwpx-fixture.js');
 
 let passed = 0;

@@ -10,10 +10,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { modelFromHwpx } = require('./form-model.js');
-const { recognize, recognizePlaceholders } = require('./form-recognize.js');
-const { writePlan, planFill } = require('./form-fill.js');
-const { resolveValues } = require('./field-dictionary.js');
+const { modelFromHwpx } = require('../engine/form-model.js');
+const { recognize, recognizePlaceholders } = require('../engine/form-recognize.js');
+const { writePlan, planFill } = require('../engine/form-fill.js');
+const { resolveValues } = require('../engine/field-dictionary.js');
 const { fieldValues, shortDate, fieldOf } = require('./merge-fields.js');
 const { runHancom } = require('./hancom.js');
 

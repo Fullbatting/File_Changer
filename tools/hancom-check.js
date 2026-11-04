@@ -8,15 +8,15 @@
 
 const fs = require('fs');
 const path = require('path');
-const { runHancom } = require('../hancom.js');
-const { modelFromHwpx } = require('../form-model.js');
-const { recognize, summarize } = require('../form-recognize.js');
-const { resolveValues } = require('../field-dictionary.js');
-const { fillHwpx } = require('../form-fill.js');
-const { fillForm } = require('../print-job.js');
-const { inspectFormFile } = require('../form-library.js');
-const { unknownFields, SAMPLE_INPUT } = require('../merge-fields.js');
-const { readHwpFields } = require('../hwp-reader.js');
+const { runHancom } = require('../src/autofill/hancom.js');
+const { modelFromHwpx } = require('../src/engine/form-model.js');
+const { recognize, summarize } = require('../src/engine/form-recognize.js');
+const { resolveValues } = require('../src/engine/field-dictionary.js');
+const { fillHwpx } = require('../src/engine/form-fill.js');
+const { fillForm } = require('../src/autofill/print-job.js');
+const { inspectFormFile } = require('../src/autofill/form-library.js');
+const { unknownFields, SAMPLE_INPUT } = require('../src/autofill/merge-fields.js');
+const { readHwpFields } = require('../src/engine/hwp-reader.js');
 
 
 

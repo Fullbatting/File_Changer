@@ -3,7 +3,7 @@
 // 실제 한글 연결은 Windows PC에서 tools\한글연결점검.bat로 확인한다. node tests/unit/hancom.test.js
 
 const assert = require('assert');
-const { buildScript, parseOutput, runHancom } = require('../../hancom.js');
+const { buildScript, parseOutput, runHancom } = require('../../src/autofill/hancom.js');
 
 let passed = 0;
 let failed = 0;

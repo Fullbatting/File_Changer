@@ -2,7 +2,7 @@
   "name": "doc-convert-mailmerge",
   "version": "1.0.0",
   "description": "서식 자동 기입: 환자 인적사항을 한 번 넣으면 등록한 한글 서식(메일머지 필드)에 채워 바로 인쇄 (Electron)",
-  "main": "main.js",
+  "main": "src/main/main.js",
   "author": "",
   "license": "MIT",
   "engines": {
@@ -11,9 +11,9 @@
   "scripts": {
     "start": "electron .",
     "test:unit": "node tests/unit/run.js",
-    "test": "npm run test:unit && npm run test:legacy && npm run test:e2e",
-    "test:legacy": "node tests/legacy/run.js",
-    "test:e2e": "node tests/e2e/run.js"
+    "test:screen": "node tests/screen/run.js",
+    "test:security": "node tests/security/run.js",
+    "test": "npm run test:unit && npm run test:screen && npm run test:security"
   },
   "dependencies": {
     "electron": "^44.9.0",

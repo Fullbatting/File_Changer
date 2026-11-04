@@ -8,7 +8,7 @@ const os = require('os');
 const path = require('path');
 
 const REPO = path.resolve(__dirname, '..', '..');
-const FIX = process.env.LEGACY_FIX;
+const FIX = process.env.SCREEN_FIX;
 const PizZip = require(path.join(REPO, 'node_modules', 'pizzip'));
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'autofill-userdata-'));
 const saveDir = fs.mkdtempSync(path.join(os.tmpdir(), 'autofill-save-'));
@@ -36,8 +36,8 @@ const allFilesUnder = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flat
 
 app.whenReady().then(async () => {
   // 프로덕션과 같은 보안 설정(격리 세계) + 테스트 preload(가짜 인쇄)
-  const win = new BrowserWindow({ show: false, webPreferences: { ...require(path.join(REPO, 'app-security.js')).webPreferences(), preload: path.join(__dirname, 'autofill-preload.js') } });
-  await win.loadFile(path.join(REPO, 'index.html'));
+  const win = new BrowserWindow({ show: false, webPreferences: { ...require(path.join(REPO, 'src', 'main', 'app-security.js')).webPreferences(), preload: path.join(__dirname, 'autofill-preload.js') } });
+  await win.loadFile(path.join(REPO, 'src', 'renderer', 'index.html'));
   const js = (code) => win.webContents.executeJavaScriptInIsolatedWorld(999, [{ code }]);
   await js(`window.alert = (m) => { window.__alerts = (window.__alerts || []).concat(String(m)); }; window.confirm = () => true; true;`);
   await sleep(600);

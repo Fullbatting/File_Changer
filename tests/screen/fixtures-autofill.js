@@ -22,7 +22,7 @@ function write(dir, name, paragraphs) {
   fs.writeFileSync(path.join(dir, name), zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' }));
 }
 
-const root = path.join(process.env.LEGACY_FIX, 'forms');
+const root = path.join(process.env.SCREEN_FIX, 'forms');
 const emergency = (withHead) => [
   P(T('[서식 1호] ')),
   P(T('현 장 확 인 서')),

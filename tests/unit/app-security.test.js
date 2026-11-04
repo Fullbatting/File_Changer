@@ -1,13 +1,13 @@
 const assert = require('assert');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { webPreferences, protectWindow, assertTrustedSender } = require('../../app-security');
+const { webPreferences, protectWindow, assertTrustedSender } = require('../../src/main/app-security');
 
 const prefs = webPreferences();
 assert.strictEqual(prefs.nodeIntegration, false);
 assert.strictEqual(prefs.contextIsolation, true);
-assert.strictEqual(prefs.preload, path.join(__dirname, '..', '..', 'preload.js'));
-const frame = { url: pathToFileURL(path.join(__dirname, '..', '..', 'index.html')).href };
+assert.strictEqual(prefs.preload, path.join(__dirname, '..', '..', 'src', 'main', 'preload.js'));
+const frame = { url: pathToFileURL(path.join(__dirname, '..', '..', 'src', 'renderer', 'index.html')).href };
 const contents = { mainFrame: frame };
 const win = { webContents: contents };
 assert.doesNotThrow(() => assertTrustedSender({ sender: contents, senderFrame: frame }, win));

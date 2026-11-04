@@ -6,9 +6,9 @@ const { ipcRenderer, webUtils } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { h, replace, select } = require('./ui-dom.js');
-const { KINDS, APPLICANTS, COMMON_AGENCY, prepareImport, entryStatus, sortForManager } = require('./form-library.js');
-const { fieldOf, sourceLabel, SAMPLE_INPUT } = require('./merge-fields.js');
-const { ensureHwpx, saveFilled } = require('./print-job.js');
+const { KINDS, APPLICANTS, COMMON_AGENCY, prepareImport, entryStatus, sortForManager } = require('../autofill/form-library.js');
+const { fieldOf, sourceLabel, SAMPLE_INPUT } = require('../autofill/merge-fields.js');
+const { ensureHwpx, saveFilled } = require('../autofill/print-job.js');
 const { log, notifyError } = require('./common.js');
 
 const FORM_FILTERS = [

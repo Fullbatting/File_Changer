@@ -23,7 +23,7 @@ dialog.showSaveDialog = async (win, options) => {
   const filePath = saves.shift();
   return { canceled: !filePath, filePath };
 };
-require('../../main');
+require('../../src/main/main');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const results = [];
@@ -90,7 +90,7 @@ async function run() {
     show: false,
     webPreferences: { preload: path.join(__dirname, 'untrusted-preload.js'), nodeIntegration: false, contextIsolation: true, sandbox: false },
   });
-  await outsider.loadFile(path.join(repo, 'index.html'));
+  await outsider.loadFile(path.join(repo, 'src', 'renderer', 'index.html'));
   let denied;
   for (let i = 0; i < 50; i++) {
     denied = await outsider.webContents.executeJavaScriptInIsolatedWorld(999, [{ code: 'window.__ipcResults' }]);

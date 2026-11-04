@@ -2,7 +2,7 @@
 
 Electron + Node.js + JavaScript로 만든 데스크톱 프로그램입니다. 파이썬은 사용하지 않습니다.
 
-> 이 브랜치(`mail-merge`)는 **서식 자동 기입(메일머지)** 프로그램입니다. 문서 양식 변환기는 `document-converter` 브랜치, 예전 통합 프로그램은 `main` 브랜치에 있습니다.
+> 이 브랜치(`mail-merge`)는 **서식 자동 기입(메일머지)** 프로그램입니다. 문서 양식 변환기는 `document-converter` 브랜치, 둘을 합친 통합 프로그램은 `main` 브랜치에 있습니다.
 
 환자 인적사항을 한 번 넣고 제출 기관과 서류를 고르면, 등록해 둔 한글 서식에 내용을 채워 **한글로 바로 인쇄**합니다. 지금까지 엑셀(메일머지.xlsx)에 인적사항을 모아 두고 한글 메일머지로 서식마다 채우던 일을 대신합니다.
 
@@ -65,37 +65,50 @@ npm start
 npm install                             # 의존성 설치
 node node_modules/electron/install.js   # Electron 실행 파일 내려받기 (Electron 42부터 npm install이 자동으로 받지 않음)
 npm start                               # 앱 실행 (electron .)
-npm test                                # 단위 테스트 + 회귀 시나리오 + 보안 시나리오 (Linux 서버에서는 xvfb-run -a npm test)
+npm test                                # 단위 테스트 + 화면 시나리오 + 보안 시나리오 (Linux 서버에서는 xvfb-run -a npm test)
 npm run test:unit                       # 판단 로직 단위 테스트(Electron 없이): 메일머지 필드·서식 보관함·채우기/인쇄·서식 엔진·한글 자동 조작 스크립트
-npm run test:legacy                     # 화면 시나리오(서식 등록 → 출력 → 인적사항 지움). Linux 서버에서는 xvfb-run -a
-npm run test:e2e                        # 보안 시나리오: 실제 main.js 창의 격리·CSP·IPC 발신자 확인. Linux 서버에서는 xvfb-run -a
+npm run test:screen                     # 화면 시나리오(서식 등록 → 출력 → 인적사항 지움). Linux 서버에서는 xvfb-run -a
+npm run test:security                   # 보안 시나리오: 실제 main.js 창의 격리·CSP·IPC 발신자 확인. Linux 서버에서는 xvfb-run -a
 ```
 
 ## 앱 보안
 
-- 앱 페이지는 Node 통합을 끄고 컨텍스트를 격리합니다(`app-security.js`). 페이지 스크립트를 금지하는 CSP를 두고, 팝업과 일반 페이지 이동을 막습니다. 파일 대화상자·사용자 데이터 폴더 같은 IPC는 앱의 메인 창·메인 프레임에서 온 요청만 받습니다.
-- 앱 코드(`renderer.js` 이하)는 `preload.js`가 index.html에서만 불러오며, Node를 쓸 수 있는 **샌드박스 밖의 격리된 preload 세계**에서 실행됩니다. 전체 앱을 샌드박스화한 설계는 아니므로 화면에 글자를 넣을 때는 늘 텍스트로 넣습니다(`ui-dom.js`).
+- 앱 페이지는 Node 통합을 끄고 컨텍스트를 격리합니다(`src/main/app-security.js`). 페이지 스크립트를 금지하는 CSP를 두고, 팝업과 일반 페이지 이동을 막습니다. 파일 대화상자·사용자 데이터 폴더 같은 IPC는 앱의 메인 창·메인 프레임에서 온 요청만 받습니다.
+- 앱 코드(`src/renderer/renderer.js` 이하)는 `src/main/preload.js`가 index.html에서만 불러오며, Node를 쓸 수 있는 **샌드박스 밖의 격리된 preload 세계**에서 실행됩니다. 전체 앱을 샌드박스화한 설계는 아니므로 화면에 글자를 넣을 때는 늘 텍스트로 넣습니다(`src/renderer/ui-dom.js`).
 - Electron의 일부 특수 페이지 이동(예: `about:blank`)은 이동 차단을 거치지 않을 수 있으나, 그 페이지에서는 앱을 초기화하지 않고 IPC도 허용하지 않습니다.
 
 ## 코드 구성
 
-화면 코드와 판단 규칙을 나눠 두었습니다. 판단 규칙 모듈은 화면(DOM) 없이 node로 단위 테스트합니다.
+화면 코드와 판단 규칙을 나눠 두었습니다. 판단 규칙(`src/autofill` · `src/engine`)은 화면(DOM) 없이 node로 단위 테스트합니다.
+
+```
+src/
+  main/       Electron 메인 프로세스 — 앱 창·IPC, 보안 설정, preload
+  renderer/   화면 — index.html · app.css, 서류 출력 · 서식 관리 · 설정 화면
+  autofill/   서식 자동 기입 규칙 — 메일머지 필드 사전, 서식 보관함, 출력 규칙, 채우기·인쇄, 설정, 한글 자동 조작
+  engine/     한글 서식 엔진 — .hwp/.hwpx 읽기, 문서 모델, 기입 위치 인식, 채우기
+tests/
+  unit/       단위 테스트 (npm run test:unit)
+  screen/     화면 시나리오 (npm run test:screen)
+  security/   보안 시나리오 (npm run test:security)
+  fixtures/   테스트용 서식(가짜 예시)
+tools/        한글 연결 점검 도구 (Windows)
+```
 
 | 파일 | 하는 일 |
 | --- | --- |
-| `main.js` · `app-security.js` · `preload.js` | 앱 창과 IPC, 보안 설정(격리·이동 차단·IPC 발신자 확인), 격리된 세계에서 앱 코드 불러오기 |
-| `app-shell.js` | 화면 전환, 이 PC의 서식 보관함·설정 열기, 남은 임시 파일 정리 |
-| `print-screen.js` · `forms-screen.js` · `settings-screen.js` | ① 서류 출력 · ② 서식 관리 · ③ 설정 화면 |
-| `merge-fields.js` | 한글 메일머지 필드 사전(이름·주민번호·1~13·월1~일2·진료기간 …)과 입력 → 필드 값 규칙 |
-| `form-library.js` | 서식 보관함: 파일 이름으로 분류, 필드·서류 목차 읽기, 저장·백업, 주소로 기관 추천 |
-| `print-job.js` | 서식 채우기(메일머지 필드 / 자동 인식) → 한글 인쇄 → 임시 파일 지우기, 한글 파일로 저장 |
-| `print-plan.js` | 서류 출력 규칙: 기관·구분에 맞는 서식, 필요한 입력과 빈칸, 출력 전 확인, 저장 파일 이름 |
-| `settings.js` · `ui-dom.js` | PC 설정(담당자·부수·프린터) · 화면 요소 만들기 |
-| `hancom.js` | Windows 한글 자동 조작(변환·PDF·인쇄) |
-| `hwp-reader.js` | 구형 .hwp 읽기(표, 메일머지 필드, 서류 목차) |
-| `hwpx-xml.js` · `form-model.js` | 한글 .hwpx를 원문 위치를 기억하는 표·칸·문단 모델로 읽기 |
-| `form-recognize.js` · `field-dictionary.js` · `form-fill.js` | 기입 위치 인식({{필드}}·머리글 옆 빈 칸 …) → 입력 항목 연결 → 원문 XML의 그 자리만 바꿔 채우기 |
-| `common.js` | 진행 기록·오류 알림 |
+| `main/main.js` · `main/app-security.js` · `main/preload.js` | 앱 창과 IPC, 보안 설정(격리·이동 차단·IPC 발신자 확인), 격리된 세계에서 앱 코드 불러오기 |
+| `renderer/renderer.js` · `renderer/app-shell.js` | 화면 시작, 화면 전환, 이 PC의 서식 보관함·설정 열기, 남은 임시 파일 정리 |
+| `renderer/print-screen.js` · `forms-screen.js` · `settings-screen.js` | ① 서류 출력 · ② 서식 관리 · ③ 설정 화면 |
+| `renderer/common.js` · `renderer/ui-dom.js` | 진행 기록·오류 알림 · 화면 요소 만들기(글자는 늘 텍스트로) |
+| `autofill/merge-fields.js` | 한글 메일머지 필드 사전(이름·주민번호·1~13·월1~일2·진료기간 …)과 입력 → 필드 값 규칙 |
+| `autofill/form-library.js` | 서식 보관함: 파일 이름으로 분류, 필드·서류 목차 읽기, 저장·백업, 주소로 기관 추천 |
+| `autofill/print-plan.js` | 서류 출력 규칙: 기관·구분에 맞는 서식, 필요한 입력과 빈칸, 출력 전 확인, 저장 파일 이름 |
+| `autofill/print-job.js` | 서식 채우기(메일머지 필드 / 자동 인식) → 한글 인쇄 → 임시 파일 지우기, 한글 파일로 저장 |
+| `autofill/settings.js` · `autofill/hancom.js` | PC 설정(담당자·부수·프린터) · Windows 한글 자동 조작(변환·PDF·인쇄) |
+| `engine/hwp-reader.js` | 구형 .hwp 읽기(표, 메일머지 필드, 서류 목차) |
+| `engine/hwpx-xml.js` · `engine/form-model.js` | 한글 .hwpx를 원문 위치를 기억하는 표·칸·문단 모델로 읽기 |
+| `engine/form-recognize.js` · `field-dictionary.js` · `form-fill.js` | 기입 위치 인식({{필드}}·머리글 옆 빈 칸 …) → 입력 항목 연결 → 원문 XML의 그 자리만 바꿔 채우기 |
 
 ## 지원 서식 형식
 

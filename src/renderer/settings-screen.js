@@ -1,7 +1,7 @@
 // settings-screen.js
 // ③ 설정 화면: 담당자(이름·직위·번호), 기본 부수, 프린터 이름, 한글 연결 확인.
 
-const { saveSettings } = require('./settings.js');
+const { saveSettings } = require('../autofill/settings.js');
 const { log, notifyError } = require('./common.js');
 
 function init(app) {

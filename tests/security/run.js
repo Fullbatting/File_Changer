@@ -1,6 +1,6 @@
-// tests/e2e/run.js
-// 보안 자동 테스트(Electron 창)를 차례로 실행한다: npm run test:e2e
-// Linux(화면 없는 서버)에서는 xvfb-run -a npm run test:e2e 로 실행한다. 날짜 검사는 한국 시간 기준이다.
+// tests/security/run.js
+// 보안 자동 테스트(Electron 창)를 차례로 실행한다: npm run test:security
+// Linux(화면 없는 서버)에서는 xvfb-run -a npm run test:security 로 실행한다. 날짜 검사는 한국 시간 기준이다.
 
 const { spawnSync } = require('child_process');
 const path = require('path');

@@ -19,7 +19,7 @@ function createWindow() {
 
   protectWindow(mainWindow);
   mainWindow.setMenuBarVisibility(false);
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
   mainWindow.on('closed', () => {
     mainWindow = null;

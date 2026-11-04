@@ -2,7 +2,7 @@
 window.addEventListener('DOMContentLoaded', () => {
   const { pathToFileURL } = require('url');
   const path = require('path');
-  if (window === window.top && window.location.href === pathToFileURL(path.join(__dirname, 'index.html')).href) {
-    require('./renderer.js');
+  if (window === window.top && window.location.href === pathToFileURL(path.join(__dirname, '..', 'renderer', 'index.html')).href) {
+    require('../renderer/renderer.js');
   }
 });

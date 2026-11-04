@@ -10,9 +10,9 @@ const path = require('path');
 const crypto = require('crypto');
 const PizZip = require('pizzip');
 const { fieldOf, unknownFields } = require('./merge-fields.js');
-const { readHwpFields, documentOutline } = require('./hwp-reader.js');
-const { modelFromHwpx } = require('./form-model.js');
-const { recognizePlaceholders } = require('./form-recognize.js');
+const { readHwpFields, documentOutline } = require('../engine/hwp-reader.js');
+const { modelFromHwpx } = require('../engine/form-model.js');
+const { recognizePlaceholders } = require('../engine/form-recognize.js');
 
 const KINDS = ['긴급복지(국가형)', '경기도형 긴급복지', '서울형 긴급복지', '광주형 긴급지원', '암환자 의료비', '기타'];
 const APPLICANTS = ['세대주', '세대원', '공통'];

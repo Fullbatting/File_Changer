@@ -7,10 +7,10 @@ const { ipcRenderer } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { h, replace } = require('./ui-dom.js');
-const { INPUT_BY_KEY, INPUT_GROUPS, checkRrn, rrnSummary } = require('./merge-fields.js');
-const { suggestAgencies, entryStatus } = require('./form-library.js');
-const { printForms, saveFilled } = require('./print-job.js');
-const plan = require('./print-plan.js');
+const { INPUT_BY_KEY, INPUT_GROUPS, checkRrn, rrnSummary } = require('../autofill/merge-fields.js');
+const { suggestAgencies, entryStatus } = require('../autofill/form-library.js');
+const { printForms, saveFilled } = require('../autofill/print-job.js');
+const plan = require('../autofill/print-plan.js');
 const { log } = require('./common.js');
 
 const RRN_HINT = '생년월일(6자리)·{{1}}~{{13}}은 여기서 자동으로 만듭니다';

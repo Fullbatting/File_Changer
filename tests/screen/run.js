@@ -1,6 +1,6 @@
-// tests/legacy/run.js
-// 화면 시나리오(서식 등록 → 출력 → 인적사항 지움)를 실행한다: npm run test:legacy
-// Linux(화면 없는 서버)에서는 xvfb-run -a npm run test:legacy. 날짜 검사는 한국 시간 기준이다.
+// tests/screen/run.js
+// 화면 시나리오(서식 등록 → 출력 → 인적사항 지움)를 실행한다: npm run test:screen
+// Linux(화면 없는 서버)에서는 xvfb-run -a npm run test:screen. 날짜 검사는 한국 시간 기준이다.
 // 테스트용 파일은 실행할 때마다 임시 폴더에 만든다(fixtures-*.js). 시나리오마다 PASS/FAIL 줄과
 // "N/M passed" 요약 줄을 출력하며, FAIL 줄이 없고 요약이 M/M일 때만 성공으로 본다.
 
@@ -12,7 +12,7 @@ const electronPath = require('electron');
 
 const TIMEOUT_MS = 5 * 60 * 1000;
 const electronArgs = process.platform === 'linux' ? ['--no-sandbox', '--disable-gpu'] : [];
-const env = (fix) => ({ ...process.env, TZ: process.env.TZ || 'Asia/Seoul', LEGACY_FIX: fix });
+const env = (fix) => ({ ...process.env, TZ: process.env.TZ || 'Asia/Seoul', SCREEN_FIX: fix });
 
 const basicDir = fs.mkdtempSync(path.join(os.tmpdir(), 'autofill-screen-'));
 const made = spawnSync(process.execPath, [path.join(__dirname, 'fixtures-autofill.js')], { env: env(basicDir), encoding: 'utf-8' });
