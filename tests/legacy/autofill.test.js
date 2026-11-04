@@ -176,12 +176,10 @@ app.whenReady().then(async () => {
   const afterImport = await js(`document.querySelectorAll('#formsTableBody tr').length`);
   record('백업 내보내기 → 하나 지움 → 가져오면 다시 3개', fs.existsSync(backup) && afterDelete === 2 && afterImport === 3, `${afterDelete} → ${afterImport}`);
 
-  /* ---------- 10. 다른 탭(문서 양식 변환기 · 예전 메일머지)과 함께 ---------- */
+  /* ---------- 10. 문서 양식 변환기 탭과 함께 ---------- */
   const tabActive = (id) => js(`document.getElementById(${JSON.stringify(id)}).classList.contains('active')`);
-  await js(`document.querySelector('.tab-btn[data-tab="tab2"]').click(); true;`);
-  const onTab2 = (await tabActive('tab2')) && !(await tabActive('tabAutofill'));
   await js(`document.querySelector('.tab-btn[data-tab="tab1"]').click(); true;`);
-  record('상단 탭으로 예전 메일머지·문서 양식 변환기로 바꿀 수 있음', onTab2 && (await tabActive('tab1')) && !(await tabActive('tabAutofill')), '');
+  record('상단 탭으로 문서 양식 변환기로 바꿀 수 있음', (await tabActive('tab1')) && !(await tabActive('tabAutofill')) && !(await js(`!!document.getElementById('tab2')`)), '');
   const pageGlobals = await win.webContents.executeJavaScript('({ require: typeof require, process: typeof process })');
   record('웹 페이지 쪽에는 Node가 노출되지 않음(서식 자동 기입도 격리 세계에서 동작)', pageGlobals.require === 'undefined' && pageGlobals.process === 'undefined', JSON.stringify(pageGlobals));
 

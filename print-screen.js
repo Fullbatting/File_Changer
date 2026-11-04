@@ -219,7 +219,7 @@ function init(app) {
     const s = plan.summaryOf(list, fullInput(), state.asks, state.copies);
     replace($('printSummary'), h('strong', {}, s.title), s.detail);
     $('copiesValue').textContent = String(state.copies);
-    $('btnPrint').textContent = list.length > 0 ? `서식 출력 (${list.length}건)` : '서식 출력';
+    $('btnPrint').querySelector('span').textContent = list.length > 0 ? `서식 출력 (${list.length}건)` : '서식 출력';
     $('btnPrint').disabled = list.length === 0;
     $('btnSaveFilled').disabled = list.length === 0;
   }

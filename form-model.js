@@ -23,7 +23,8 @@ function sectionNames(zip) {
 }
 
 /**
- * 문단(<hp:p>) 하나의 글자와 원문 위치. 문단 안에 든 표(<hp:tbl>)의 글자는 그 표의 문단으로 따로 센다.
+ * 문단(<hp:p>) 하나의 글자와 원문 위치. 문단 안에 든 표(<hp:tbl>)와 글상자·도형 글(<hp:drawText> 안의 <hp:p>)의
+ * 글자는 그 안쪽 문단으로 따로 센다(바깥 문단에도 세면 같은 글자를 두 번 고치게 된다).
  * pieces: [{ kind:'text', node, plainStart, plainEnd, decoded } | { kind:'virtual', plainStart, plainEnd }]
  */
 function readParagraph(xml, pEl) {
@@ -46,7 +47,7 @@ function readParagraph(xml, pEl) {
     });
   };
   walk(pEl, (el) => {
-    if (el.local === 'tbl') return false;
+    if (el.local === 'tbl' || el.local === 'p') return false;
     if (el.local === 'run') runs.push(el);
     if (el.local === 't') {
       visitT(el);

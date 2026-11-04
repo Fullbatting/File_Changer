@@ -1,6 +1,6 @@
 // common.js
-// 탭1(문서 양식 변환기)/탭2(메일머지)가 공통으로 쓰는 유틸·캐시·동의어 사전·
-// 헤더 자동 감지·컬럼 자동 매핑 로직. 두 탭 모두 이 모듈을 require 하여 쓴다.
+// 문서 양식 변환기(tab1.js)·매핑 작업대가 쓰는 공통 유틸·캐시·파일 읽기·동의어 사전·컬럼 자동 매핑 연결부와
+// 진행 기록·탭 전환(서식 자동 기입 탭도 진행 기록을 함께 쓴다).
 
 const { ipcRenderer, webUtils } = require('electron');
 const fs = require('fs');
@@ -105,9 +105,7 @@ function evictOldestIfFull(map, limit) {
 /**
  * "진행 / 취소" 형태의 확인 모달 공통 열기/닫기 로직. 모달을 보이고, 진행·취소
  * 버튼 클릭 또는 배경(오버레이) 클릭(취소로 처리)에 따라 true/false를 Promise로
- * 반환한다. 탭1의 변환 결과 확인 모달과 탭2의 일괄 생성 확인 모달이 이 구조를
- * 그대로 공유하므로 여기만 한 번 구현한다 — 모달에 채울 내용(요약/미리보기
- * 테이블)을 만드는 로직은 서로 달라 호출하는 쪽에 남겨둔다.
+ * 반환한다. 모달에 채울 내용(요약/미리보기 테이블)을 만드는 로직은 호출하는 쪽에 둔다.
  */
 function confirmModal(modalEl, proceedBtn, cancelBtn) {
   return new Promise((resolve) => {
@@ -393,22 +391,6 @@ const DATA_FILE_FILTERS = [
   { name: 'All Files', extensions: ['*'] },
 ];
 
-const DOCX_FILTERS = [
-  { name: 'Word Document', extensions: ['docx'] },
-  { name: 'All Files', extensions: ['*'] },
-];
-
-const HWPX_FILTERS = [
-  { name: '한글(HWPX) 문서', extensions: ['hwpx'] },
-  { name: 'All Files', extensions: ['*'] },
-];
-
-// 문서 계열: 각 본문 포맷(docx/hwpx)과 그 서식파일 버전(dotx/hwpt)은 내부 구조가 동일해 같은 엔진으로 처리됨
-const TEMPLATE_FILTERS = [
-  { name: 'Word / 한글(HWPX) 문서', extensions: ['docx', 'dotx', 'hwpx', 'hwpt'] },
-  { name: 'All Files', extensions: ['*'] },
-];
-
 const JSON_FILTERS = [
   { name: 'JSON Files', extensions: ['json'] },
   { name: 'All Files', extensions: ['*'] },
@@ -462,10 +444,8 @@ function bindDropzone(zoneEl, fileNameEl, filters, onFileSelected) {
 /**
  * 파일 선택 직후의 최초 시트 반영은 onChange로, 사용자가 드롭다운에서 직접
  * 시트를 바꿀 때의 후속 처리(상태 초기화 등)는 onUserChangedSheet으로 분리
- * 되어 있다. 탭1(A/B 파일)과 탭2(메일머지 데이터 파일)가 이 함수를 공유하므로,
- * '시트를 바꾸면 무엇을 초기화할지'는 호출하는 쪽의 책임으로 둬야 한다 —
- * 그렇지 않으면 탭2에서 시트를 바꿨는데 탭1의 매핑/프리셋이 초기화되는 식의
- * 엉뚱한 부작용이 생긴다.
+ * 되어 있다. 원본(A)·타겟(B)이 이 함수를 함께 쓰므로 '시트를 바꾸면 무엇을
+ * 초기화할지'는 호출하는 쪽의 책임이다.
  */
 function refreshSheetSelector(filePath, sheetRowEl, sheetSelectEl, onChange, onUserChangedSheet) {
   try {
@@ -674,7 +654,7 @@ function xmlEscape(str) {
  * 가장 흔한 사례만큼은 바로 매핑하기 위한 가벼운 대안. 프리셋과 마찬가지로
  * 사용자 데이터 폴더에 저장되어 앱을 다시 실행해도 유지되며, 모달에서
  * "한 줄 = 동의어 한 그룹(쉼표로 구분)" 형태로 직접 편집할 수 있다.
- * 탭1(컬럼 매핑)과 탭2(메일머지 변수 매핑)가 findAutoMatch를 통해 함께 쓴다.
+ * 컬럼 자동 매핑(autoMatchAll)과 원본 합치기의 기준 컬럼 추천이 함께 쓴다.
  * ------------------------------------------------------------------------- */
 
 const SYNONYM_GROUPS_FILE_NAME = 'synonym-groups.json';
@@ -770,16 +750,14 @@ synonymManagerSaveBtn.addEventListener('click', () => {
     synonymGroups = textToSynonymGroups(synonymGroupsTextarea.value);
     saveSynonymGroupsToDisk();
     closeSynonymManagerModal();
-    log(`동의어 사전을 저장했습니다 (${synonymGroups.length}개 그룹). 다음 [구조 분석]/[데이터 불러오기]부터 적용됩니다.`, 'ok');
+    log(`동의어 사전을 저장했습니다 (${synonymGroups.length}개 그룹). 다음 [구조 분석]부터 적용됩니다.`, 'ok');
   } catch (err) {
     synonymManagerError.textContent = friendlyErrorMessage(err);
     synonymManagerError.hidden = false;
   }
 });
 
-[document.getElementById('btnManageSynonymsTab1'), document.getElementById('btnManageSynonymsTab2')].forEach((btn) => {
-  if (btn) btn.addEventListener('click', openSynonymManagerModal);
-});
+document.getElementById('btnManageSynonymsTab1').addEventListener('click', openSynonymManagerModal);
 
 /* -------------------------------------------------------------------------
  * 사용자 데이터 폴더 경로 (프리셋은 탭1, 동의어 사전은 이 모듈이 사용).
@@ -828,9 +806,6 @@ module.exports = {
   readWorkbookSmart,
   getHwpxSectionNames,
   DATA_FILE_FILTERS,
-  DOCX_FILTERS,
-  HWPX_FILTERS,
-  TEMPLATE_FILTERS,
   JSON_FILTERS,
   bindDropzone,
   refreshSheetSelector,

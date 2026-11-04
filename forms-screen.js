@@ -90,7 +90,7 @@ function init(app) {
 
   function importRow(p) {
     const name = path.basename(p.file);
-    const note = p.error ? h('div', { class: 'sub', style: 'color: var(--fa-danger)' }, `읽을 수 없음: ${p.error}`) : p.dup ? h('div', { class: 'sub' }, '이미 등록한 서식입니다(고르면 하나 더 등록)') : null;
+    const note = p.error ? h('div', { class: 'sub', style: 'color: var(--danger)' }, `읽을 수 없음: ${p.error}`) : p.dup ? h('div', { class: 'sub' }, '이미 등록한 서식입니다(고르면 하나 더 등록)') : null;
     return h(
       'tr',
       {},
@@ -100,7 +100,7 @@ function init(app) {
       h('td', {}, select(APPLICANTS, p.applicant, (v) => (p.applicant = v), { 'aria-label': '구분' })),
       h('td', {}, h('input', { type: 'checkbox', checked: p.favorite, 'aria-label': '자주 쓰는 서식', onchange: (ev) => (p.favorite = ev.target.checked) })),
       h('td', {}, h('input', { value: p.title, 'aria-label': '서식 이름', oninput: (ev) => (p.title = ev.target.value.trim() || p.title) })),
-      h('td', {}, `필드 ${p.fields.length}개 · 서류 ${p.documents.length}종`, p.unknown.length ? h('div', { class: 'sub', style: 'color: var(--fa-warn)' }, `사전에 없는 필드: ${p.unknown.join(', ')}`) : null)
+      h('td', {}, `필드 ${p.fields.length}개 · 서류 ${p.documents.length}종`, p.unknown.length ? h('div', { class: 'sub', style: 'color: var(--warn)' }, `사전에 없는 필드: ${p.unknown.join(', ')}`) : null)
     );
   }
 
@@ -203,7 +203,7 @@ function init(app) {
       },
       { 'aria-label': `${f.name} 채울 값` }
     );
-    return h('tr', {}, h('td', {}, `{{${f.name}}}`, known ? null : h('div', { class: 'sub', style: 'color: var(--fa-warn)' }, '사전에 없는 필드')), h('td', {}, `${f.count}곳`), h('td', {}, sel, ' ', text));
+    return h('tr', {}, h('td', {}, `{{${f.name}}}`, known ? null : h('div', { class: 'sub', style: 'color: var(--warn)' }, '사전에 없는 필드')), h('td', {}, `${f.count}곳`), h('td', {}, sel, ' ', text));
   }
 
   function openReview(id) {
