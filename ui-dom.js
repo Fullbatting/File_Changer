@@ -33,4 +33,16 @@ function replace(el, ...children) {
   return append(el, children);
 }
 
-module.exports = { h, append, replace };
+/** <select>: options는 [값] 또는 [[값, 보이는 글자]] · value는 고른 값 · onchange(값) */
+function select(options, value, onchange, attrs = {}) {
+  return h(
+    'select',
+    { ...attrs, onchange: (ev) => onchange(ev.target.value) },
+    options.map((o) => {
+      const [v, label] = Array.isArray(o) ? o : [o, o];
+      return h('option', { value: v, selected: v === value ? 'selected' : null }, label);
+    })
+  );
+}
+
+module.exports = { h, append, replace, select };

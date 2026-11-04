@@ -7,13 +7,19 @@ const path = require('path');
 const { openLibrary } = require('./form-library.js');
 const { loadSettings } = require('./settings.js');
 const { cleanupTemp } = require('./print-job.js');
+const { runHancom } = require('./hancom.js');
 const { log } = require('./common.js');
 
-/** 화면들이 함께 쓰는 상태: 보관함·설정, 그리고 바뀌었을 때 알림 */
+/** 화면들이 함께 쓰는 상태: 보관함·설정, 한글 실행기, 그리고 바뀌었을 때 알림 */
 const app = {
   library: null,
   settings: null,
   userDataPath: null,
+  /** 한글 자동 조작. 회귀 시나리오는 app.hooks.hancom을 가짜 인쇄로 바꿔 끼운다 */
+  hooks: { hancom: runHancom },
+  hancom(action, args) {
+    return this.hooks.hancom(action, args);
+  },
   listeners: { library: [], settings: [] },
   on(kind, fn) {
     this.listeners[kind].push(fn);
@@ -23,12 +29,14 @@ const app = {
   },
 };
 
+const SCREENS = ['screenPrint', 'screenForms', 'screenSettings', 'tab2'];
+
 function showScreen(id) {
   document.querySelectorAll('.fa-nav button').forEach((b) => {
     if (b.dataset.screen === id) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   });
-  ['screenPrint', 'screenForms', 'screenSettings', 'tab2'].forEach((s) => {
+  SCREENS.forEach((s) => {
     document.getElementById(s).hidden = s !== id;
   });
 }

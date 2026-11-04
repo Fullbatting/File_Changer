@@ -109,7 +109,7 @@ app.whenReady().then(async () => {
   await js(`(() => {
     const fs = require('fs'); const path = require('path');
     window.__printedFiles = [];
-    require(${JSON.stringify(path.join(REPO, 'print-screen.js'))}).hooks.hancom = async (action, args) => {
+    require(${JSON.stringify(path.join(REPO, 'app-shell.js'))}).app.hooks.hancom = async (action, args) => {
       if (action !== 'print') return { ok: false, error: '테스트에서는 ' + action + '을 하지 않습니다' };
       const copy = path.join(${JSON.stringify(printed)}, 'p' + window.__printedFiles.length + '.hwpx');
       fs.copyFileSync(args.file, copy);

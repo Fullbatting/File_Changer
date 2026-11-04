@@ -3,7 +3,6 @@
 
 const { saveSettings } = require('./settings.js');
 const { log, notifyError } = require('./common.js');
-const printScreen = require('./print-screen.js');
 
 function init(app) {
   const $ = (id) => document.getElementById(id);
@@ -26,7 +25,7 @@ function init(app) {
 
   $('btnProbeHancom').addEventListener('click', async () => {
     $('probeResult').textContent = '확인 중…';
-    const r = await printScreen.hooks.hancom('probe', {});
+    const r = await app.hancom('probe', {});
     $('probeResult').textContent = r.ok
       ? `한글 연결됨 (버전 ${r.version || '알 수 없음'}) · 보안 모듈 ${r.securityModule ? '등록됨' : '등록 안 됨 — 파일을 열 때 "접근 허용" 창이 뜰 수 있음'}`
       : `연결 안 됨: ${r.error}`;

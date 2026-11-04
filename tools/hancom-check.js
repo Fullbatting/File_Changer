@@ -15,22 +15,10 @@ const { resolveValues } = require('../field-dictionary.js');
 const { fillHwpx } = require('../form-fill.js');
 const { fillForm } = require('../print-job.js');
 const { inspectFormFile } = require('../form-library.js');
-const { fieldOf } = require('../merge-fields.js');
+const { unknownFields, SAMPLE_INPUT } = require('../merge-fields.js');
+const { readHwpFields } = require('../hwp-reader.js');
 
-// 메일머지 필드 서식 시험에 쓰는 가짜 예시 값(merge-fields.js의 입력 항목)
-const SAMPLE_INPUT = {
-  name: '홍길동',
-  rrn: '900101-1234567',
-  addr: '[예시 주소] ○○시 ○○로 00',
-  phone: '010-0000-0000',
-  careStart: '2026-01-02',
-  disease: '[예시 상병명]',
-  diseaseCode: 'C00.0',
-  diagnosisDate: '2026-01-01',
-  staffName: '[담당자]',
-  staffTitle: '[직위]',
-  staffPhone: '0000',
-};
+
 
 const ROOT = path.resolve(__dirname, '..');
 const OUT = path.join(ROOT, '한글연결점검_결과');
@@ -98,16 +86,16 @@ async function checkForm(file) {
   }
   if (info.fields.length > 0) {
     // 메일머지 필드 서식: 서류 출력과 같은 방법(print-job.js)으로 채운다
-    const unknown = info.fields.filter((f) => !fieldOf(f.name)).map((f) => f.name);
+    const unknown = unknownFields(info.fields);
     say(`[성공] 메일머지 필드 ${info.fields.length}개 · ${info.fields.reduce((n, f) => n + f.count, 0)}곳 — 서류 ${info.documents.length}종${unknown.length ? ` · 사전에 없는 필드: ${unknown.join(', ')}` : ''}`);
     info.documents.forEach((d) => say(`        ${d.mark} ${d.title}`.trimEnd()));
     if (path.extname(file).toLowerCase() === '.hwp') {
-      const before = require('../hwp-reader.js').readHwpFields(fs.readFileSync(file));
+      const before = readHwpFields(fs.readFileSync(file));
       const same = JSON.stringify(before.fields) === JSON.stringify(info.fields);
       say(`${same ? '[성공]' : '[확인 필요]'} .hwp와 바꾼 .hwpx의 필드가 같은지 — ${same ? '같음' : `.hwp ${before.fields.length}개 / .hwpx ${info.fields.length}개`}`);
     }
     const filled = fillForm({ mapping: {} }, fs.readFileSync(hwpx), SAMPLE_INPUT, { asks: Object.fromEntries(unknown.map((n) => [n, `[${n}]`])) });
-    const leftover = (require('../form-model.js').modelFromHwpx(filled.buffer).paragraphs.map((p) => p.text).join('\n').match(/\{\{[^{}]+\}\}/g) || []).length;
+    const leftover = (modelFromHwpx(filled.buffer).paragraphs.map((p) => p.text).join('\n').match(/\{\{[^{}]+\}\}/g) || []).length;
     const filledPath = path.join(OUT, `${base}_채움시험.hwpx`);
     fs.writeFileSync(filledPath, filled.buffer);
     say(`${leftover === 0 ? '[성공]' : '[확인 필요]'} 예시 값으로 필드 ${filled.filled}곳 채우기${leftover ? ` — 안 채워진 {{필드}} ${leftover}곳` : ''} → ${path.basename(filledPath)}`);

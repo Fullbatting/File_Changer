@@ -25,6 +25,26 @@ const INPUTS = [
   { key: 'staffPhone', group: 'staff', label: '담당자 번호', type: 'tel' },
 ];
 const INPUT_BY_KEY = new Map(INPUTS.map((i) => [i.key, i]));
+/** 묶음별 입력 key: patient(인적사항 칸) · care(진료 정보 칸) · staff(설정의 담당자) */
+const keysOf = (group) => INPUTS.filter((i) => i.group === group).map((i) => i.key);
+const INPUT_GROUPS = { patient: keysOf('patient'), care: keysOf('care'), staff: keysOf('staff') };
+/** 비어 있어도 되는 입력(작성일은 오늘, 진료 종료일은 "~"로 끝남) */
+const OPTIONAL_KEYS = ['writtenDate', 'careEnd'];
+
+/** 시험 저장·한글 연결 점검에 쓰는 가짜 예시 값(실제 인적사항이 아님) */
+const SAMPLE_INPUT = Object.freeze({
+  name: '홍길동',
+  rrn: '900101-1234567',
+  addr: '[예시 주소] ○○시 ○○로 00',
+  phone: '010-0000-0000',
+  careStart: '2026-01-02',
+  disease: '[예시 상병명]',
+  diseaseCode: 'C00.0',
+  diagnosisDate: '2026-01-01',
+  staffName: '[담당자]',
+  staffTitle: '[직위]',
+  staffPhone: '0000',
+});
 
 /**
  * 필드 이름 → 값 만드는 법과 그 값에 필요한 입력. 별칭(names)은 다른 서식에서 같은 뜻으로 쓰는 이름.
@@ -117,6 +137,12 @@ function rrnSummary(rrn, today = new Date()) {
 /** 필드 이름 → 사전 항목(없으면 null) */
 const fieldOf = (name) => FIELD_BY_NAME.get(norm(name)) || null;
 
+/** 사전에 없는 필드 이름들(fields: [{ name }] 또는 이름 목록) */
+const unknownFields = (fields) => fields.map((f) => (typeof f === 'string' ? f : f.name)).filter((n) => !fieldOf(n));
+
+/** 사전 필드가 어느 입력에서 오는지("이름", "진료 시작일·진료 종료일") */
+const sourceLabel = (field) => field.needs.map((k) => INPUT_BY_KEY.get(k).label).join('·');
+
 /**
  * 입력 → { 필드 이름: 값 } 함수. names: 서식에 든 필드 이름들(사전에 없는 이름은 extra[이름] 또는 빈칸)
  * input: 화면 입력(INPUTS의 key) · today: 작성일을 비웠을 때 쓸 날짜
@@ -144,13 +170,12 @@ function inputsFor(names) {
     if (f) f.needs.forEach((k) => keys.add(k));
     else if (!unknown.includes(name)) unknown.push(name);
   });
-  // 작성일은 비우면 오늘이므로 필수는 아니고, 진료 종료일은 진료 시작일과 함께만
   return { keys: INPUTS.map((i) => i.key).filter((k) => keys.has(k)), unknown };
 }
 
 /** 고른 서식에 필요한데 비어 있는 입력(작성일·진료 종료일은 비어도 됨) */
 function missingInputs(keys, input = {}) {
-  return keys.filter((k) => !['writtenDate', 'careEnd'].includes(k) && !String(input[k] == null ? '' : input[k]).trim());
+  return keys.filter((k) => !OPTIONAL_KEYS.includes(k) && !String(input[k] == null ? '' : input[k]).trim());
 }
 
-module.exports = { INPUTS, INPUT_BY_KEY, FIELDS, FIELD_BY_ID, fieldOf, fieldValues, inputsFor, missingInputs, parseDate, shortDate, carePeriod, rrnParts, checkRrn, rrnSummary };
+module.exports = { INPUTS, INPUT_BY_KEY, INPUT_GROUPS, SAMPLE_INPUT, FIELDS, FIELD_BY_ID, fieldOf, unknownFields, sourceLabel, fieldValues, inputsFor, missingInputs, parseDate, shortDate, carePeriod, rrnParts, checkRrn, rrnSummary };

@@ -12,7 +12,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { modelFromHwpx } = require('./form-model.js');
 const { recognize, recognizePlaceholders } = require('./form-recognize.js');
-const { writePlan, fillHwpx } = require('./form-fill.js');
+const { writePlan, planFill } = require('./form-fill.js');
 const { resolveValues } = require('./field-dictionary.js');
 const { fieldValues, shortDate, fieldOf } = require('./merge-fields.js');
 const { runHancom } = require('./hancom.js');
@@ -35,7 +35,7 @@ function valueFor(name, mapping, values, asks) {
 function fillForm(entry, hwpxBuffer, input, { asks = {}, today = new Date() } = {}) {
   const model = modelFromHwpx(hwpxBuffer);
   const spots = recognizePlaceholders(model);
-  if (spots.length === 0) return fillByRecognition(hwpxBuffer, input, today);
+  if (spots.length === 0) return fillByRecognition(hwpxBuffer, model, input, today);
 
   const names = [...new Set(spots.map((s) => s.label))];
   const values = fieldValues(names, input, { today });
@@ -52,9 +52,8 @@ function fillForm(entry, hwpxBuffer, input, { asks = {}, today = new Date() } = 
   return { buffer: writePlan(hwpxBuffer, model, plan), mode: 'fields', filled: spots.length };
 }
 
-/** 필드 없는 서식: 자동 인식 + 기존 입력 항목 사전으로 */
-function fillByRecognition(hwpxBuffer, input, today) {
-  const model = modelFromHwpx(hwpxBuffer);
+/** 필드 없는 서식: 자동 인식(form-recognize.js) + 그 엔진의 입력 항목 사전(field-dictionary.js)으로 */
+function fillByRecognition(hwpxBuffer, model, input, today) {
   const spots = recognize(model);
   const values = resolveValues({
     values: {
@@ -70,8 +69,8 @@ function fillByRecognition(hwpxBuffer, input, today) {
     applicantMode: 'self',
     today,
   });
-  const result = fillHwpx(hwpxBuffer, spots, { values, choices: {} });
-  return { buffer: result.buffer, mode: 'auto', filled: result.plan.length };
+  const plan = planFill(model, spots, { values, choices: {} });
+  return { buffer: writePlan(hwpxBuffer, model, plan), mode: 'auto', filled: plan.length };
 }
 
 /** 임시 폴더(남은 임시 파일은 시작할 때 cleanupTemp로 지운다) */

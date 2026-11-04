@@ -5,159 +5,119 @@
 const { ipcRenderer, webUtils } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const { h, replace } = require('./ui-dom.js');
-const { KINDS, APPLICANTS, COMMON_AGENCY, classifyFileName, inspectFormFile, findFormFiles, entryStatus } = require('./form-library.js');
-const { fieldOf, INPUT_BY_KEY } = require('./merge-fields.js');
+const { h, replace, select } = require('./ui-dom.js');
+const { KINDS, APPLICANTS, COMMON_AGENCY, prepareImport, entryStatus, sortForManager } = require('./form-library.js');
+const { fieldOf, sourceLabel, SAMPLE_INPUT } = require('./merge-fields.js');
 const { ensureHwpx, saveFilled } = require('./print-job.js');
 const { log, notifyError } = require('./common.js');
-const printScreen = require('./print-screen.js');
-
-// 시험 저장에 쓰는 가짜 예시 값(실제 인적사항이 아님)
-const SAMPLE_INPUT = {
-  name: '홍길동',
-  rrn: '900101-1234567',
-  addr: '[예시 주소] ○○시 ○○로 00',
-  phone: '010-0000-0000',
-  careStart: '2026-01-02',
-  disease: '[예시 상병명]',
-  diseaseCode: 'C00.0',
-  diagnosisDate: '2026-01-01',
-  staffName: '[담당자]',
-  staffTitle: '[직위]',
-  staffPhone: '0000',
-};
 
 const FORM_FILTERS = [
   { name: '한글 서식(.hwp, .hwpx)', extensions: ['hwp', 'hwpx', 'hwpt'] },
   { name: 'All Files', extensions: ['*'] },
 ];
+const BACKUP_FILTERS = [{ name: '서식 백업', extensions: ['zip'] }];
+const MAPPING_TYPES = [
+  ['fixed', '고정 글자'],
+  ['ask', '출력할 때 입력'],
+  ['blank', '비워 둠'],
+];
 
 function init(app) {
   const $ = (id) => document.getElementById(id);
   const state = { agency: '' }; // '' = 전체
+  const hancom = (a, b) => app.hancom(a, b);
+  const changed = () => app.changed('library'); // 이 화면도 듣고 있어 다시 그려진다
+  const fillAgencyList = (names) => replace($('agencyList'), names.map((a) => h('option', { value: a })));
+  const docLine = (d) => `${d.mark} ${d.title}`.trim();
 
   /* ---------- 목록 ---------- */
+
+  function sideButton(name, label, count) {
+    const onclick = () => {
+      state.agency = name;
+      render();
+    };
+    return h('button', { type: 'button', 'aria-current': String(state.agency === name), onclick }, h('span', {}, label), h('span', {}, String(count)));
+  }
+
+  function actionButton(label, onclick, danger) {
+    return h('button', { type: 'button', class: `fa-btn small${danger ? ' danger' : ''}`, onclick }, label);
+  }
+
+  function entryRow(e) {
+    const st = entryStatus(e);
+    const places = e.fields.reduce((n, f) => n + f.count, 0);
+    const actions = [actionButton('검토', () => openReview(e.id)), st.needsConvert ? actionButton('한글 변환', () => convert([e.id])) : null, actionButton('시험 저장', () => testSave(e.id)), actionButton('삭제', () => removeEntry(e.id), true)].filter(Boolean);
+    return h(
+      'tr',
+      { 'data-id': e.id },
+      h('td', {}, h('div', { style: 'font-weight: 700' }, `${e.favorite ? '★ ' : ''}${e.title}`), h('div', { class: 'sub' }, `${state.agency ? '' : `${e.agency} · `}${e.sourceName}`)),
+      h('td', { class: 'nowrap' }, e.kind),
+      h('td', { class: 'nowrap' }, e.applicant),
+      h('td', { class: 'nowrap', title: e.documents.map(docLine).join('\n') }, `${e.documents.length}종`),
+      h('td', { class: 'nowrap' }, e.fields.length ? `${e.fields.length}개 · ${places}곳` : '없음(자동 인식)'),
+      h('td', { class: 'nowrap' }, h('span', { class: `fa-badge${st.label === '사용 중' ? '' : ' warn'}`, title: st.problems.join('\n') }, st.label)),
+      h('td', { class: 'actions' }, actions.flatMap((b, i) => (i ? [' ', b] : [b])))
+    );
+  }
 
   function render() {
     const agencies = app.library.agencies();
     if (state.agency && !agencies.some((a) => a.name === state.agency)) state.agency = '';
     const all = app.library.list();
-    const sideButton = (name, label, count) =>
-      h(
-        'button',
-        {
-          type: 'button',
-          'aria-current': String(state.agency === name),
-          onclick: () => {
-            state.agency = name;
-            render();
-          },
-        },
-        h('span', {}, label),
-        h('span', {}, String(count))
-      );
     replace($('formsSide'), sideButton('', '전체', all.length), agencies.map((a) => sideButton(a.name, a.name, a.count)));
     $('formsTitle').textContent = state.agency ? `${state.agency} 서식` : '전체 서식';
-
-    const list = all
-      .filter((e) => !state.agency || e.agency === state.agency)
-      .sort((a, b) => (a.agency === COMMON_AGENCY) - (b.agency === COMMON_AGENCY) || a.agency.localeCompare(b.agency, 'ko') || KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind) || a.applicant.localeCompare(b.applicant, 'ko') || b.favorite - a.favorite);
-    if (list.length === 0) {
-      replace($('formsTableBody'), h('tr', {}, h('td', { colspan: '7' }, h('div', { class: 'fa-empty' }, '등록한 서식이 없습니다. 위의 [서식 파일 추가]·[폴더째 추가]를 누르거나 파일을 끌어다 놓으세요.'))));
-      return;
-    }
+    const list = sortForManager(all.filter((e) => !state.agency || e.agency === state.agency));
     replace(
       $('formsTableBody'),
-      list.map((e) => {
-        const st = entryStatus(e);
-        const places = e.fields.reduce((n, f) => n + f.count, 0);
-        return h(
-          'tr',
-          { 'data-id': e.id },
-          h('td', {}, h('div', { style: 'font-weight: 700' }, `${e.favorite ? '★ ' : ''}${e.title}`), h('div', { class: 'sub' }, `${state.agency ? '' : `${e.agency} · `}${e.sourceName}`)),
-          h('td', { class: 'nowrap' }, e.kind),
-          h('td', { class: 'nowrap' }, e.applicant),
-          h('td', { class: 'nowrap', title: e.documents.map((d) => `${d.mark} ${d.title}`.trim()).join('\n') }, `${e.documents.length}종`),
-          h('td', { class: 'nowrap' }, e.fields.length ? `${e.fields.length}개 · ${places}곳` : '없음(자동 인식)'),
-          h('td', { class: 'nowrap' }, h('span', { class: `fa-badge${st.label === '사용 중' ? '' : ' warn'}`, title: st.problems.join('\n') }, st.label)),
-          h(
-            'td',
-            { class: 'actions' },
-            h('button', { type: 'button', class: 'fa-btn small', onclick: () => openReview(e.id) }, '검토'),
-            ' ',
-            st.needsConvert ? h('button', { type: 'button', class: 'fa-btn small', onclick: () => convert([e.id]) }, '한글 변환') : null,
-            st.needsConvert ? ' ' : null,
-            h('button', { type: 'button', class: 'fa-btn small', onclick: () => testSave(e.id) }, '시험 저장'),
-            ' ',
-            h('button', { type: 'button', class: 'fa-btn small danger', onclick: () => removeEntry(e.id) }, '삭제')
-          )
-        );
-      })
+      list.length === 0 ? h('tr', {}, h('td', { colspan: '7' }, h('div', { class: 'fa-empty' }, '등록한 서식이 없습니다. 위의 [서식 파일 추가]·[폴더째 추가]를 누르거나 파일을 끌어다 놓으세요.'))) : list.map(entryRow)
     );
   }
 
   /* ---------- 추가: 파일 이름으로 분류 → 확인 창 ---------- */
 
-  let pending = []; // 확인 창의 줄들
+  let pending = []; // 확인 창의 줄들(form-library.js의 prepareImport)
 
   function startImport(paths) {
-    const files = [...new Set(paths.flatMap((p) => findFormFiles(p)))];
-    if (files.length === 0) {
+    pending = prepareImport(paths, app.library.list());
+    if (pending.length === 0) {
       alert('한글 서식 파일(.hwp, .hwpx)을 찾지 못했습니다.');
       return;
     }
-    const existing = app.library.list();
-    pending = files.map((file) => {
-      const info = classifyFileName(file);
-      let inspected = { fields: [], documents: [], error: '' };
-      try {
-        inspected = { ...inspectFormFile(file), error: '' };
-      } catch (err) {
-        inspected.error = err.message;
-      }
-      const dup = existing.some((e) => e.sourceName === path.basename(file) && e.agency === info.agency && e.applicant === info.applicant);
-      return { file, ...info, ...inspected, include: !inspected.error && !dup, dup };
-    });
     renderImport();
     $('importModal').hidden = false;
   }
 
-  function renderImport() {
-    const agencies = [...new Set([...app.library.agencies().map((a) => a.name), ...pending.map((p) => p.agency), COMMON_AGENCY])];
-    replace($('agencyList'), agencies.map((a) => h('option', { value: a })));
-    const select = (options, value, onchange, label) => h('select', { 'aria-label': label, onchange: (ev) => onchange(ev.target.value) }, options.map((o) => h('option', { value: o, selected: o === value ? 'selected' : null }, o)));
-    replace(
-      $('importTableBody'),
-      pending.map((p, i) => {
-        const unknown = p.fields.filter((f) => !fieldOf(f.name)).map((f) => f.name);
-        return h(
-          'tr',
-          {},
-          h(
-            'td',
-            { class: 'file' },
-            h('label', {}, h('input', { type: 'checkbox', checked: p.include, disabled: !!p.error, onchange: (ev) => (p.include = ev.target.checked), 'aria-label': `${path.basename(p.file)} 등록` }), ' ', path.basename(p.file)),
-            p.error ? h('div', { class: 'sub', style: 'color: var(--fa-danger)' }, `읽을 수 없음: ${p.error}`) : p.dup ? h('div', { class: 'sub' }, '이미 등록한 서식입니다(고르면 하나 더 등록)') : null
-          ),
-          h('td', {}, h('input', { value: p.agency, list: 'agencyList', 'aria-label': '제출 기관', oninput: (ev) => (p.agency = ev.target.value.trim() || COMMON_AGENCY) })),
-          h('td', {}, select(KINDS, p.kind, (v) => (p.kind = v), '지원 종류')),
-          h('td', {}, select(APPLICANTS, p.applicant, (v) => (p.applicant = v), '구분')),
-          h('td', {}, h('input', { type: 'checkbox', checked: p.favorite, 'aria-label': '자주 쓰는 서식', onchange: (ev) => (p.favorite = ev.target.checked) })),
-          h('td', {}, h('input', { value: p.title, 'aria-label': '서식 이름', oninput: (ev) => (p.title = ev.target.value.trim() || p.title) })),
-          h('td', {}, `필드 ${p.fields.length}개 · 서류 ${p.documents.length}종`, unknown.length ? h('div', { class: 'sub', style: 'color: var(--fa-warn)' }, `사전에 없는 필드: ${unknown.join(', ')}`) : null)
-        );
-      })
+  function importRow(p) {
+    const name = path.basename(p.file);
+    const note = p.error ? h('div', { class: 'sub', style: 'color: var(--fa-danger)' }, `읽을 수 없음: ${p.error}`) : p.dup ? h('div', { class: 'sub' }, '이미 등록한 서식입니다(고르면 하나 더 등록)') : null;
+    return h(
+      'tr',
+      {},
+      h('td', { class: 'file' }, h('label', {}, h('input', { type: 'checkbox', checked: p.include, disabled: !!p.error, 'aria-label': `${name} 등록`, onchange: (ev) => (p.include = ev.target.checked) }), ' ', name), note),
+      h('td', {}, h('input', { value: p.agency, list: 'agencyList', 'aria-label': '제출 기관', oninput: (ev) => (p.agency = ev.target.value.trim() || COMMON_AGENCY) })),
+      h('td', {}, select(KINDS, p.kind, (v) => (p.kind = v), { 'aria-label': '지원 종류' })),
+      h('td', {}, select(APPLICANTS, p.applicant, (v) => (p.applicant = v), { 'aria-label': '구분' })),
+      h('td', {}, h('input', { type: 'checkbox', checked: p.favorite, 'aria-label': '자주 쓰는 서식', onchange: (ev) => (p.favorite = ev.target.checked) })),
+      h('td', {}, h('input', { value: p.title, 'aria-label': '서식 이름', oninput: (ev) => (p.title = ev.target.value.trim() || p.title) })),
+      h('td', {}, `필드 ${p.fields.length}개 · 서류 ${p.documents.length}종`, p.unknown.length ? h('div', { class: 'sub', style: 'color: var(--fa-warn)' }, `사전에 없는 필드: ${p.unknown.join(', ')}`) : null)
     );
   }
 
-  $('importCancel').addEventListener('click', () => {
+  function renderImport() {
+    fillAgencyList([...new Set([...app.library.agencies().map((a) => a.name), ...pending.map((p) => p.agency), COMMON_AGENCY])]);
+    replace($('importTableBody'), pending.map(importRow));
+  }
+
+  function closeImport() {
     $('importModal').hidden = true;
     pending = [];
-  });
+  }
+
+  $('importCancel').addEventListener('click', closeImport);
   $('importConfirm').addEventListener('click', async () => {
     const chosen = pending.filter((p) => p.include);
-    $('importModal').hidden = true;
-    pending = [];
+    closeImport();
     const added = [];
     chosen.forEach((p) => {
       try {
@@ -167,11 +127,11 @@ function init(app) {
       }
     });
     log(`서식 ${added.length}개를 등록했습니다.`, 'ok');
-    render();
-    app.changed('library');
+    changed();
     const toConvert = added.filter((e) => !e.hwpx).map((e) => e.id);
-    if (toConvert.length > 0 && process.platform === 'win32') await convert(toConvert);
-    else if (toConvert.length > 0) log(`.hwp 서식 ${toConvert.length}개는 한글이 있는 Windows PC에서 처음 출력할 때(또는 [한글 변환]으로) .hwpx로 바꿉니다.`, 'warn');
+    if (toConvert.length === 0) return;
+    if (process.platform === 'win32') await convert(toConvert);
+    else log(`.hwp 서식 ${toConvert.length}개는 한글이 있는 Windows PC에서 처음 출력할 때(또는 [한글 변환]으로) .hwpx로 바꿉니다.`, 'warn');
   });
 
   $('btnAddFiles').addEventListener('click', async () => {
@@ -203,75 +163,77 @@ function init(app) {
       const e = app.library.get(id);
       log(`한글로 .hwpx 변환 중: ${e.title}`);
       try {
-        await ensureHwpx(app.library, e, { hancom: (a, b) => printScreen.hooks.hancom(a, b) });
+        await ensureHwpx(app.library, e, { hancom });
         log(`변환 완료: ${e.title}`, 'ok');
       } catch (err) {
         log(`변환 실패: ${e.title} — ${err.message}`, 'warn');
       }
     }
-    render();
-    app.changed('library');
+    changed();
   }
 
   /* ---------- 검토: 이름·기관·종류·구분과 필드 연결 ---------- */
 
   let reviewing = null; // { id, mapping, meta }
 
+  function metaFields(m) {
+    const field = (label, control) => h('div', { class: 'fa-field' }, h('label', { class: 'stack' }, label, control));
+    return [
+      field('서식 이름', h('input', { value: m.title, oninput: (ev) => (m.title = ev.target.value) })),
+      field('제출 기관', h('input', { value: m.agency, list: 'agencyList', oninput: (ev) => (m.agency = ev.target.value.trim() || COMMON_AGENCY) })),
+      field('지원 종류', select(KINDS, m.kind, (v) => (m.kind = v))),
+      field('구분', select(APPLICANTS, m.applicant, (v) => (m.applicant = v))),
+      field('자주 쓰는 서식(★)', h('input', { type: 'checkbox', checked: m.favorite, onchange: (ev) => (m.favorite = ev.target.checked) })),
+    ];
+  }
+
+  /** 필드 하나의 연결 줄: 자동(사전에 있을 때) · 고정 글자 · 출력할 때 입력 · 비워 둠 */
+  function mappingRow(f, mapping) {
+    const known = fieldOf(f.name);
+    const cur = mapping[f.name] || (known ? { type: 'auto' } : { type: 'ask' });
+    mapping[f.name] = cur;
+    const text = h('input', { value: cur.text || '', placeholder: '고정 글자', hidden: cur.type !== 'fixed', 'aria-label': `${f.name} 고정 글자`, oninput: (ev) => (cur.text = ev.target.value) });
+    const options = known ? [['auto', `자동: ${sourceLabel(known)}에서`], ...MAPPING_TYPES] : MAPPING_TYPES;
+    const sel = select(
+      options,
+      cur.type,
+      (v) => {
+        cur.type = v;
+        text.hidden = v !== 'fixed';
+      },
+      { 'aria-label': `${f.name} 채울 값` }
+    );
+    return h('tr', {}, h('td', {}, `{{${f.name}}}`, known ? null : h('div', { class: 'sub', style: 'color: var(--fa-warn)' }, '사전에 없는 필드')), h('td', {}, `${f.count}곳`), h('td', {}, sel, ' ', text));
+  }
+
   function openReview(id) {
     const e = app.library.get(id);
     reviewing = { id, mapping: JSON.parse(JSON.stringify(e.mapping || {})), meta: { title: e.title, agency: e.agency, kind: e.kind, applicant: e.applicant, favorite: e.favorite } };
-    const m = reviewing.meta;
-    const field = (label, control) => h('div', { class: 'fa-field' }, h('label', { class: 'stack' }, label, control));
-    replace(
-      $('reviewMeta'),
-      field('서식 이름', h('input', { value: m.title, oninput: (ev) => (m.title = ev.target.value) })),
-      field('제출 기관', h('input', { value: m.agency, list: 'agencyList', oninput: (ev) => (m.agency = ev.target.value.trim() || COMMON_AGENCY) })),
-      field('지원 종류', h('select', { onchange: (ev) => (m.kind = ev.target.value) }, KINDS.map((k) => h('option', { value: k, selected: k === m.kind ? 'selected' : null }, k)))),
-      field('구분', h('select', { onchange: (ev) => (m.applicant = ev.target.value) }, APPLICANTS.map((k) => h('option', { value: k, selected: k === m.applicant ? 'selected' : null }, k)))),
-      field('자주 쓰는 서식(★)', h('input', { type: 'checkbox', checked: m.favorite, onchange: (ev) => (m.favorite = ev.target.checked) }))
-    );
-    replace($('agencyList'), app.library.agencies().map((a) => h('option', { value: a.name })));
+    replace($('reviewMeta'), metaFields(reviewing.meta));
+    fillAgencyList(app.library.agencies().map((a) => a.name));
     $('reviewTitle').textContent = `서식 검토 — ${e.sourceName}`;
-    replace($('reviewDocs'), e.documents.length ? e.documents.map((d) => `${d.mark} ${d.title}`.trim()).join(' · ') : '(목차를 찾지 못했습니다)');
+    replace($('reviewDocs'), e.documents.length ? e.documents.map(docLine).join(' · ') : '(목차를 찾지 못했습니다)');
     replace(
       $('reviewFields'),
       e.fields.length === 0
         ? h('tr', {}, h('td', { colspan: '3' }, '메일머지 필드가 없는 서식입니다. 출력할 때 자동 인식(머리글 옆 빈 칸 등)으로 채웁니다. [시험 저장]으로 결과를 확인하세요.'))
-        : e.fields.map((f) => {
-            const known = fieldOf(f.name);
-            const cur = reviewing.mapping[f.name] || (known ? { type: 'auto' } : { type: 'ask' });
-            reviewing.mapping[f.name] = cur;
-            const autoLabel = known ? `자동: ${known.needs.map((k) => INPUT_BY_KEY.get(k).label).join('·')}에서` : null;
-            const text = h('input', { value: cur.text || '', placeholder: '고정 글자', hidden: cur.type !== 'fixed', 'aria-label': `${f.name} 고정 글자`, oninput: (ev) => (cur.text = ev.target.value) });
-            const sel = h(
-              'select',
-              {
-                'aria-label': `${f.name} 채울 값`,
-                onchange: (ev) => {
-                  cur.type = ev.target.value;
-                  text.hidden = cur.type !== 'fixed';
-                },
-              },
-              [known ? ['auto', autoLabel] : null, ['fixed', '고정 글자'], ['ask', '출력할 때 입력'], ['blank', '비워 둠']].filter(Boolean).map(([v, l]) => h('option', { value: v, selected: cur.type === v ? 'selected' : null }, l))
-            );
-            return h('tr', {}, h('td', {}, `{{${f.name}}}`, known ? null : h('div', { class: 'sub', style: 'color: var(--fa-warn)' }, '사전에 없는 필드')), h('td', {}, `${f.count}곳`), h('td', {}, sel, ' ', text));
-          })
+        : e.fields.map((f) => mappingRow(f, reviewing.mapping))
     );
     $('reviewModal').hidden = false;
   }
 
-  $('reviewCancel').addEventListener('click', () => {
+  function closeReview() {
     $('reviewModal').hidden = true;
     reviewing = null;
-  });
+  }
+
+  $('reviewCancel').addEventListener('click', closeReview);
   $('reviewSave').addEventListener('click', () => {
     if (!reviewing) return;
     app.library.update(reviewing.id, { ...reviewing.meta, mapping: reviewing.mapping, reviewed: true });
     log(`서식 검토를 저장했습니다: ${reviewing.meta.title}`, 'ok');
-    $('reviewModal').hidden = true;
-    reviewing = null;
-    render();
-    app.changed('library');
+    closeReview();
+    changed();
   });
 
   /* ---------- 시험 저장 · 삭제 ---------- */
@@ -281,13 +243,14 @@ function init(app) {
     const out = await ipcRenderer.invoke('dialog:saveFile', { title: '가짜 예시 값으로 채운 시험 파일 저장', defaultPath: `${e.title}_시험.hwpx`, filters: [{ name: '한글(HWPX) 문서', extensions: ['hwpx'] }] });
     if (!out) return;
     try {
-      const r = await saveFilled(app.library, e, SAMPLE_INPUT, out, { asks: Object.fromEntries(e.fields.map((f) => [f.name, `[${f.name}]`])), hancom: (a, b) => printScreen.hooks.hancom(a, b) });
+      const asks = Object.fromEntries(e.fields.map((f) => [f.name, `[${f.name}]`]));
+      const r = await saveFilled(app.library, e, SAMPLE_INPUT, out, { asks, hancom });
       log(`시험 파일을 저장했습니다(${r.mode === 'fields' ? `필드 ${r.filled}곳` : `자동 인식 ${r.filled}곳`}): ${out}`, 'ok');
       alert(`가짜 예시 값으로 채운 시험 파일을 저장했습니다.\n한글에서 열어 글자 위치를 확인하세요.\n${out}`);
     } catch (err) {
       notifyError('시험 파일을 만들지 못했습니다', err);
     }
-    render();
+    render(); // 처음 시험 저장하며 한글로 바꿨으면 상태가 바뀐다
   }
 
   function removeEntry(id) {
@@ -295,14 +258,13 @@ function init(app) {
     if (!confirm(`"${e.title}"(${e.agency} · ${e.applicant}) 서식을 목록에서 지울까요? 원본 파일은 그대로 있습니다.`)) return;
     app.library.remove(id);
     log(`서식을 지웠습니다: ${e.title}`);
-    render();
-    app.changed('library');
+    changed();
   }
 
   /* ---------- 백업 ---------- */
 
   $('btnExport').addEventListener('click', async () => {
-    const out = await ipcRenderer.invoke('dialog:saveFile', { title: '서식 백업 내보내기', defaultPath: `서식백업_${new Date().toISOString().slice(0, 10)}.zip`, filters: [{ name: '서식 백업', extensions: ['zip'] }] });
+    const out = await ipcRenderer.invoke('dialog:saveFile', { title: '서식 백업 내보내기', defaultPath: `서식백업_${new Date().toISOString().slice(0, 10)}.zip`, filters: BACKUP_FILTERS });
     if (!out) return;
     try {
       fs.writeFileSync(out, app.library.exportBackup());
@@ -312,13 +274,12 @@ function init(app) {
     }
   });
   $('btnImport').addEventListener('click', async () => {
-    const paths = await ipcRenderer.invoke('dialog:openFile', { title: '서식 백업 가져오기', filters: [{ name: '서식 백업', extensions: ['zip'] }] });
+    const paths = await ipcRenderer.invoke('dialog:openFile', { title: '서식 백업 가져오기', filters: BACKUP_FILTERS });
     if (!paths || !paths.length) return;
     try {
       const r = app.library.importBackup(fs.readFileSync(paths[0]));
       log(`백업을 가져왔습니다: 새 서식 ${r.added}개, 바뀐 서식 ${r.replaced}개.`, 'ok');
-      render();
-      app.changed('library');
+      changed();
     } catch (err) {
       notifyError('백업을 가져오지 못했습니다', err);
     }
@@ -328,4 +289,4 @@ function init(app) {
   render();
 }
 
-module.exports = { init, SAMPLE_INPUT };
+module.exports = { init };

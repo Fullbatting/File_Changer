@@ -1,6 +1,6 @@
 // tests/unit/autofill.test.js
 // 서식 자동 기입: 메일머지 필드 사전(merge-fields.js), .hwp 필드·목차 읽기(hwp-reader.js), 서식 보관함(form-library.js),
-// 채우기·인쇄(print-job.js), 설정(settings.js). 값은 모두 가짜 예시다. node tests/unit/autofill.test.js
+// 채우기·인쇄(print-job.js), 서류 출력 규칙(print-plan.js), 설정(settings.js). 값은 모두 가짜 예시다. node tests/unit/autofill.test.js
 
 const assert = require('assert');
 const fs = require('fs');
@@ -11,6 +11,7 @@ const mf = require('../../merge-fields.js');
 const { readHwpFields } = require('../../hwp-reader.js');
 const lib = require('../../form-library.js');
 const job = require('../../print-job.js');
+const plan = require('../../print-plan.js');
 const { loadSettings, saveSettings } = require('../../settings.js');
 const { buildHwp } = require('./hwp-fixture.js');
 const { buildHwpx } = require('./hwpx-fixture.js');
@@ -178,6 +179,36 @@ test('보관함 백업: 내보내기 → 다른 PC에서 가져오기, 경로를
   assert.throws(() => b.importBackup(Buffer.from('x')), /백업 파일이 아닙니다/);
 });
 
+test('등록 확인 줄: 분류·필드·사전에 없는 필드, 이미 등록한 서식과 읽을 수 없는 파일은 처음에 고르지 않음', () => {
+  const root = fs.mkdtempSync(path.join(dir, 'import-'));
+  fs.mkdirSync(path.join(root, '2. (세대원)'));
+  fs.writeFileSync(path.join(root, '2. (세대원)', '양주시청-긴급복지지원 신청서.hwp'), buildHwp([[{ field: '이름' }, { field: '보호자' }]]));
+  fs.writeFileSync(path.join(root, '노원구청-긴급복지지원 신청서(세대주).hwpx'), 'not a zip');
+  const rows = lib.prepareImport([root], [{ sourceName: '양주시청-긴급복지지원 신청서.hwp', agency: '양주시청', applicant: '세대원' }]);
+  const yang = rows.find((r) => r.agency === '양주시청');
+  const nowon = rows.find((r) => r.agency === '노원구청');
+  assert.deepStrictEqual([yang.applicant, yang.fields.length, yang.unknown, yang.dup, yang.include], ['세대원', 2, ['보호자'], true, false]);
+  assert.ok(nowon.error && !nowon.include && nowon.fields.length === 0);
+  assert.deepStrictEqual(lib.prepareImport([path.join(root, 'nothing')].filter(fs.existsSync)), []);
+});
+
+test('보관함 백업: 다른 서식의 파일 이름을 가리키는 항목은 건너뛰고, 모르는 칸은 버린다', () => {
+  const a = lib.openLibrary(fs.mkdtempSync(path.join(dir, 'c-')));
+  const src = path.join(dir, '연천군청-긴급복지지원 신청서(세대주).hwpx');
+  fs.writeFileSync(src, hwpxWith([P(F('이름'))]));
+  const e = a.add(src, { ...lib.classifyFileName(src), ...lib.inspectFormFile(src) });
+  const zip = new PizZip(a.exportBackup());
+  const data = JSON.parse(zip.file('index.json').asText());
+  data.entries.push({ ...data.entries[0], id: 'aaaaaaaaaaaa' }); // 파일은 e의 것을 가리킴
+  data.entries[0].extra = '<script>';
+  data.entries[0].kind = '없는 종류';
+  zip.file('index.json', JSON.stringify(data));
+  const b = lib.openLibrary(fs.mkdtempSync(path.join(dir, 'd-')));
+  assert.deepStrictEqual(b.importBackup(zip.generate({ type: 'nodebuffer' })), { added: 1, replaced: 0 });
+  const got = b.get(e.id);
+  assert.ok(!('extra' in got) && got.kind === '기타' && got.agency === '연천군청');
+});
+
 test('폴더 안의 서식 찾기: 하위 폴더까지, 한글 임시 파일(~$)·다른 파일은 빼고', () => {
   const root = fs.mkdtempSync(path.join(dir, 'tree-'));
   fs.mkdirSync(path.join(root, '1. (세대주)'));
@@ -241,6 +272,46 @@ test('인쇄: .hwp는 먼저 한글로 변환해 보관, 채운 임시 파일은
   assert.ok(again[0].ok === false && calls.filter((c) => c === 'convert').length === 1, '두 번째부터는 변환하지 않는다');
   const noHancom = await job.printForms(L, [lib.openLibrary(path.join(ldir, 'forms')).get(b.id)], INPUT, { hancom: async () => ({ ok: false, error: '한글 자동 조작은 한글이 설치된 Windows에서만 할 수 있습니다.' }) });
   assert.ok(noHancom[0].error.includes('Windows'));
+});
+
+/* ---------- 서류 출력 규칙(print-plan.js) ---------- */
+
+const entry = (id, over = {}) => ({ id, title: id, agency: '양주시청', kind: '긴급복지(국가형)', applicant: '세대주', favorite: false, documents: [{ mark: '[서식 1호]', title: '현장확인서' }], fields: [], mapping: {}, ...over });
+
+test('출력 규칙: 기관·구분에 맞는 서식(공통 포함), 지원 종류 → ★ → 이름 순, 지원 종류별 묶음', () => {
+  const list = [
+    entry('나', { kind: '경기도형 긴급복지' }),
+    entry('가'),
+    entry('다', { favorite: true }),
+    entry('세대원용', { applicant: '세대원' }),
+    entry('공통', { applicant: '공통', kind: '암환자 의료비' }),
+    entry('다른 기관', { agency: '노원구청' }),
+  ];
+  const shown = plan.entriesFor(list, '양주시청', '세대주');
+  assert.deepStrictEqual(shown.map((e) => e.id), ['다', '가', '나', '공통']);
+  assert.deepStrictEqual(plan.groupByKind(shown).map((g) => [g.kind, g.items.length]), [['긴급복지(국가형)', 2], ['경기도형 긴급복지', 1], ['암환자 의료비', 1]]);
+  assert.deepStrictEqual(plan.entriesFor(list, '양주시청', '세대원').map((e) => e.id), ['세대원용', '공통']);
+});
+
+test('출력 규칙: 필요한 입력·비어 있는 칸·출력 때 입력·설정의 담당자', () => {
+  const e = entry('암', { fields: ['이름', '주민등록번호', '주질병', '담당자', '진료기간', '보호자', '기관'].map((name) => ({ name, count: 1 })), mapping: { 보호자: { type: 'ask' }, 기관: { type: 'fixed', text: '[예시]' } } });
+  assert.deepStrictEqual(plan.neededInputs([e]), ['name', 'rrn', 'careStart', 'careEnd', 'disease', 'staffName']);
+  assert.deepStrictEqual(plan.askFieldNames([e, e]), ['보호자']);
+  assert.deepStrictEqual(plan.missingFor(e, { name: '홍길동' }, {}), ['주민등록번호', '진료 시작일', '주질병(상병명)', '담당자', '보호자']);
+  assert.deepStrictEqual(plan.missingFor(e, { ...INPUT, careStart: '2026-01-02' }, { 보호자: '[x]' }), []);
+  assert.deepStrictEqual(plan.missingStaff([e], { staffName: '' }), ['담당자']);
+  assert.deepStrictEqual(plan.missingStaff([e], { staffName: '[담당자]' }), []);
+});
+
+test('출력 규칙: 출력 전 확인(필수 칸·주민등록번호 모양은 막고, 빈칸은 알림), 요약, 저장 파일 이름', () => {
+  const e = entry('서식', { fields: [{ name: '이름', count: 1 }, { name: '4', count: 1 }, { name: '연락처', count: 1 }] });
+  assert.deepStrictEqual(plan.checkBeforeOutput([e], {}, {}), { block: '이름, 주민등록번호을(를) 넣어 주세요.', focus: 'name', missing: [] });
+  assert.deepStrictEqual(plan.checkBeforeOutput([e], { name: 'x', rrn: '123' }, {}), { block: '주민등록번호를 확인하세요: 주민등록번호는 숫자 13자리입니다', focus: 'rrn', missing: [] });
+  assert.deepStrictEqual(plan.checkBeforeOutput([e], { name: 'x', rrn: '900101-1234567' }, {}), { block: '', focus: null, missing: ['연락처'] });
+  assert.deepStrictEqual(plan.summaryOf([], {}, {}, 1), { title: '출력할 서류를 고르세요', detail: '' });
+  assert.deepStrictEqual(plan.summaryOf([e, e], { name: 'x', rrn: '900101-1234567', phone: '1' }, {}, 2), { title: '서식 2개 · 서류 약 2종 × 2부', detail: '모든 칸이 채워집니다' });
+  assert.strictEqual(plan.filledFileName(entry('a/b:c')), '양주시청_a_b_c(세대주).hwpx');
+  assert.strictEqual(plan.filledFileName(entry('암', { applicant: '공통', agency: '공통 서식' })), '공통 서식_암.hwpx');
 });
 
 test('설정: 없으면 기본값, 부수는 1~99, 망가진 파일은 기본값과 오류', () => {
