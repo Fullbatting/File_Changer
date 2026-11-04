@@ -1,6 +1,6 @@
 // hwp-reader.js
 // 구형 한글(.hwp, HWP 5.0 바이너리) 문서에서 표를 읽어 2차원 배열로 돌려준다.
-// DOM이 필요 없는 순수 Node 모듈이라 렌더러(common.js)와 단위 테스트에서 함께 쓴다.
+// DOM이 필요 없는 순수 Node 모듈이라 데이터 파일 읽기(data-file.js)·서식 엔진과 단위 테스트에서 함께 쓴다.
 //
 // HWP 5.0 구조: OLE 복합 문서 안에 FileHeader(서명/버전/플래그)와 본문
 // BodyText/Section0, Section1...이 들어 있고, 본문은 (보통) raw deflate로 압축된
@@ -42,7 +42,7 @@ function hwpError(message) {
  * 둘째 행부터 값이 사라지고, 2단 헤더(위: "이름"(세로병합) | "연락처"(가로병합),
  * 아래: "전화번호" | "이메일")에서도 아래 행에 "이름"이 채워져야 그 행이 완전한
  * 헤더 행이 되기 때문이다. 가로 병합은 같은 이름의 컬럼이 여러 개 생기지 않도록
- * 채우지 않는다. HWPX(common.js)와 HWP가 함께 쓴다.
+ * 채우지 않는다. HWPX(data-file.js)와 HWP가 함께 쓴다.
  */
 function cellsToRows(cells) {
   let rowCount = 0;

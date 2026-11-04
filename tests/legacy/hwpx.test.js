@@ -47,11 +47,11 @@ async function run() {
 
   const staff = path.join(FIX, 'staff.hwpx');
 
-  /* ---------- 1. 표 파싱 자체 (공통 모듈 직접 호출) ---------- */
+  /* ---------- 1. 표 파싱 자체 (데이터 파일 모듈 직접 호출) ---------- */
   const parsed = await js(`(() => {
-    const common = require(${JSON.stringify(path.join(REPO, 'common.js'))});
+    const dataFile = require(${JSON.stringify(path.join(REPO, 'data-file.js'))});
     const XLSX = require(${JSON.stringify(path.join(REPO, 'node_modules', 'xlsx'))});
-    const wb = common.readWorkbookSmart(${JSON.stringify(staff)});
+    const wb = dataFile.readWorkbook(${JSON.stringify(staff)});
     const sheets = {};
     wb.SheetNames.forEach((n) => { sheets[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '' }); });
     const approvalObjects = XLSX.utils.sheet_to_json(wb.Sheets['표 1'], { defval: '' });

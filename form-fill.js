@@ -197,12 +197,10 @@ function paragraphXmlEdits(xml, p, edits) {
 }
 
 /**
- * .hwpx(버퍼)의 기입 위치를 채운 새 .hwpx(버퍼). spots는 이 파일에서 인식한(또는 저장해 둔) 기입 위치.
- * 반환: { buffer, plan }
+ * 글자 계획(planFill이나 메일머지가 만든 [{ spotId, paragraphId, start, end, text }])을 원문 XML에 적용한 새 .hwpx 버퍼.
+ * model은 이 buffer로 만든 모델이어야 한다(바꾸지 않으므로 여러 번 다시 써도 된다 — 메일머지 일괄 생성).
  */
-function fillHwpx(buffer, spots, answers = {}) {
-  const model = modelFromHwpx(buffer);
-  const plan = planFill(model, spots, answers);
+function writePlan(buffer, model, plan) {
   const zip = new PizZip(buffer);
   const bySection = new Map();
   plan.forEach((e) => {
@@ -222,7 +220,17 @@ function fillHwpx(buffer, spots, answers = {}) {
   // HWPX(OCF)는 mimetype을 압축하지 않은 채 맨 앞에 둔다
   const mime = zip.file('mimetype');
   if (mime) zip.file('mimetype', mime.asText(), { compression: 'STORE' });
-  return { buffer: zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' }), plan };
+  return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
-module.exports = { fillHwpx, planFill, previewTexts, mappingOf, displayWidth, padInto, checkInto, CHECK_MARK };
+/**
+ * .hwpx(버퍼)의 기입 위치를 채운 새 .hwpx(버퍼). spots는 이 파일에서 인식한(또는 저장해 둔) 기입 위치.
+ * 반환: { buffer, plan }
+ */
+function fillHwpx(buffer, spots, answers = {}) {
+  const model = modelFromHwpx(buffer);
+  const plan = planFill(model, spots, answers);
+  return { buffer: writePlan(buffer, model, plan), plan };
+}
+
+module.exports = { fillHwpx, writePlan, planFill, previewTexts, mappingOf, displayWidth, padInto, checkInto, CHECK_MARK };

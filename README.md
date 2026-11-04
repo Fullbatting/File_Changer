@@ -55,9 +55,26 @@ npm install                             # 의존성 설치
 node node_modules/electron/install.js   # Electron 실행 파일 내려받기 (Electron 42부터 npm install이 자동으로 받지 않음)
 npm start                               # 앱 실행 (electron .)
 npm test                                # 단위 테스트 + 회귀 시나리오 (Linux 서버에서는 xvfb-run -a npm test)
-npm run test:unit                       # 판단 로직 단위 테스트(Electron 없이): 데이터 파일 인식·변수 자동 매핑·서식 엔진·한글 자동 조작 스크립트
+npm run test:unit                       # 판단 로직 단위 테스트(Electron 없이): 데이터 파일 읽기·변수 자동 매핑·메일머지 템플릿·서식 엔진·한글 자동 조작 스크립트
 npm run test:legacy                     # 회귀 시나리오(직접 입력·일괄 생성, 한글 HWPX 표 데이터·템플릿, 전체 기능 점검 3단계). Linux 서버에서는 xvfb-run -a
 ```
+
+## 코드 구성
+
+화면 코드와 판단 규칙을 나눠 두었습니다. 판단 규칙 모듈은 화면(DOM) 없이 node로 단위 테스트합니다.
+
+| 파일 | 하는 일 |
+| --- | --- |
+| `tab2.js` | 메일머지 화면: 템플릿 고르기 → 변수 추출 → 직접 입력 / 일괄 생성(매핑 표·확인 창·저장) |
+| `common.js` | 화면 공통 도우미: 진행 로그, 오류 알림, 확인 창, 파일 끌어다 놓기, 시트(표) 고르기, 동의어 사전 창 |
+| `merge-template.js` | Word·한글 템플릿의 `{{변수}}` 찾기·바꾸기, 결과 파일 이름, 빈 값 검사 |
+| `data-file.js` | 데이터 파일(엑셀·CSV·한글 문서 속 표) 읽기 |
+| `table-reader.js` · `auto-match.js` | 헤더 행 찾기·값 읽기 · 변수 ↔ 열 자동 매핑 |
+| `synonyms.js` · `file-utils.js` | 동의어 사전 저장 · 파일 읽기/쓰기, 오류 문구, 파일이 바뀌면 버려지는 캐시 |
+| `hwp-reader.js` | 구형 .hwp 표 읽기 |
+| `hwpx-xml.js` · `form-model.js` | 한글 .hwpx를 원문 위치를 기억하는 표·칸·문단 모델로 읽기(메일머지·데이터 파일·서식 자동 기입이 함께 씀) |
+| `form-recognize.js` · `field-dictionary.js` · `form-fill.js` | 서식 자동 기입: 기입 위치 인식 → 입력 항목 연결 → 원문 XML의 그 자리만 바꿔 채우기 |
+| `hancom.js` | Windows 한글 자동 조작(변환·PDF·인쇄) |
 
 ## 지원 파일 형식
 

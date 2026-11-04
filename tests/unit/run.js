@@ -4,7 +4,7 @@
 const { spawnSync } = require('child_process');
 const path = require('path');
 
-const TESTS = ['table-reader.test.js', 'auto-match.test.js', 'form-engine.test.js', 'common-forms.test.js', 'hancom.test.js'];
+const TESTS = ['table-reader.test.js', 'auto-match.test.js', 'data-file.test.js', 'merge-template.test.js', 'form-engine.test.js', 'common-forms.test.js', 'hancom.test.js'];
 let failed = 0;
 for (const file of TESTS) {
   const result = spawnSync(process.execPath, [path.join(__dirname, file)], { stdio: 'inherit' });

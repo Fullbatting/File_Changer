@@ -7,8 +7,8 @@
 const PizZip = require('pizzip');
 const { parseXml, attr, childrenByLocal, walk, decodeEntities } = require('./hwpx-xml.js');
 
-/** 문단 안에서 글자로 보이는 요소: 줄바꿈·탭은 한 글자로 센다(바꿀 수는 없는 자리) */
-const VIRTUAL_CHARS = { lineBreak: '\n', tab: '\t' };
+/** 문단 안에서 글자로 보이는 요소: 줄바꿈·탭·묶음 빈칸·고정폭 빈칸은 한 글자로 센다(바꿀 수는 없는 자리) */
+const VIRTUAL_CHARS = { lineBreak: '\n', tab: '\t', nbSpace: ' ', fwSpace: ' ' };
 // 문단 안에 들어앉은 개체(표·그림·OLE·수식): 이런 문단은 글자가 없어도 빈 칸이 아니다. 떠 있는 도형(점선 상자 등)은 막지 않는다
 const OBJECT_LOCALS = new Set(['tbl', 'pic', 'ole', 'equation']);
 const hasObject = (el) => el.children.some((run) => run.type === 'el' && run.local === 'run' && run.children.some((c) => c.type === 'el' && OBJECT_LOCALS.has(c.local)));
@@ -81,17 +81,24 @@ function modelFromHwpx(buffer) {
       if (el.local !== 'tbl') return true;
       const table = { id: `t${model.tables.length + 1}`, section: si, rowCnt: Number(attr(el, 'rowCnt')) || 0, colCnt: Number(attr(el, 'colCnt')) || 0, cells: [] };
       model.tables.push(table);
-      childrenByLocal(el, 'tr').forEach((tr) => {
+      childrenByLocal(el, 'tr').forEach((tr, trIndex) => {
+        let colCursor = 0;
         childrenByLocal(tr, 'tc').forEach((tc) => {
           const addr = childrenByLocal(tc, 'cellAddr')[0];
           const span = childrenByLocal(tc, 'cellSpan')[0];
+          // 칸 주소가 없으면 줄 순서·앞 칸 다음 자리로
+          const num = (node, name, fallback) => {
+            const v = node ? parseInt(attr(node, name), 10) : NaN;
+            return Number.isNaN(v) ? fallback : v;
+          };
           const cell = {
-            row: addr ? Number(attr(addr, 'rowAddr')) : 0,
-            col: addr ? Number(attr(addr, 'colAddr')) : 0,
-            rowSpan: span ? Math.max(1, Number(attr(span, 'rowSpan')) || 1) : 1,
-            colSpan: span ? Math.max(1, Number(attr(span, 'colSpan')) || 1) : 1,
+            row: num(addr, 'rowAddr', trIndex),
+            col: num(addr, 'colAddr', colCursor),
+            rowSpan: Math.max(1, num(span, 'rowSpan', 1)),
+            colSpan: Math.max(1, num(span, 'colSpan', 1)),
             paragraphIds: [],
           };
+          colCursor = cell.col + cell.colSpan;
           const subList = childrenByLocal(tc, 'subList')[0] || tc;
           childrenByLocal(subList, 'p').forEach((pEl) => {
             const p = paragraphByEl.get(pEl);
