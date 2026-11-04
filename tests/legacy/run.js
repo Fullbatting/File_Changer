@@ -17,7 +17,7 @@ const env = (fix) => ({ ...process.env, TZ: process.env.TZ || 'Asia/Seoul', LEGA
 // 기본·HWPX 시나리오가 함께 쓰는 폴더와 전체 기능 점검 폴더를 따로 둔다(파일 이름이 대소문자만 다른 것이 있음)
 const basicDir = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-basic-'));
 const auditDir = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-audit-'));
-for (const [script, dir] of [['fixtures-basic.js', basicDir], ['fixtures-hwpx.js', basicDir], ['fixtures-hwpx-template.js', basicDir], ['fixtures-audit.js', auditDir]]) {
+for (const [script, dir] of [['fixtures-basic.js', basicDir], ['fixtures-hwpx.js', basicDir], ['fixtures-hwpx-template.js', basicDir], ['fixtures-audit.js', auditDir], ['fixtures-autofill.js', basicDir]]) {
   const r = spawnSync(process.execPath, [path.join(__dirname, script)], { env: env(dir), encoding: 'utf-8' });
   if (r.status !== 0) {
     console.log(`✗ ${script}: 테스트 파일을 만들지 못했습니다\n${r.stderr}`);
@@ -29,6 +29,7 @@ const RUNS = [
   { name: 'basic', file: 'basic.test.js', dir: basicDir },
   { name: 'hwpx', file: 'hwpx.test.js', dir: basicDir },
   { name: 'hwpx-template', file: 'hwpx-template.test.js', dir: basicDir },
+  { name: '서식 자동 기입(등록 → 출력 → 인적사항 지움)', file: 'autofill.test.js', dir: basicDir },
   { name: 'audit 1(전체 기능)', file: 'audit.test.js', dir: auditDir, args: ['1'] },
   { name: 'audit 2(다시 실행 — 설정 유지)', file: 'audit.test.js', dir: auditDir, args: ['2'] },
   {
