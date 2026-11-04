@@ -22,6 +22,7 @@ const TAG_CTRL_HEADER = 71;
 const TAG_LIST_HEADER = 72;
 const TAG_TABLE = 77;
 const CTRL_ID_TABLE = 0x74626c20; // 't','b','l',' '
+const CTRL_ID_MAILMERGE = 0x256d6d67; // '%','m','m','g' — 한글 메일 머지 표시(필드)
 
 const OLE_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
 const FLAG_COMPRESSED = 1 << 0;
@@ -180,8 +181,8 @@ function readStream(cfb, fullPath) {
   return idx >= 0 && cfb.FileIndex[idx].content ? Buffer.from(cfb.FileIndex[idx].content) : null;
 }
 
-/** .hwp 파일 버퍼에서 모든 표를 문서 순서대로 [{ rows, cells }]로 읽는다 (빈 표 포함) */
-function readHwpTables(buffer) {
+/** .hwp 파일 버퍼를 열어 본문 구역마다 레코드 트리 */
+function readSections(buffer) {
   if (buffer.slice(0, 20).toString('latin1') === 'HWP Document File V3') {
     throw hwpError('한글 97 이전(HWP 3.0) 형식의 문서는 지원하지 않습니다. 최신 한글 프로그램에서 다시 저장한 뒤 시도하세요.');
   }
@@ -219,8 +220,7 @@ function readHwpTables(buffer) {
     throw hwpError('한글 문서에서 본문을 찾을 수 없습니다. 파일이 손상되었을 수 있습니다.');
   }
 
-  const tables = [];
-  sectionPaths.forEach((p) => {
+  return sectionPaths.map((p) => {
     const raw = readStream(cfb, p) || Buffer.alloc(0);
     let data = raw;
     if (flags & FLAG_COMPRESSED) {
@@ -230,9 +230,94 @@ function readHwpTables(buffer) {
         throw hwpError('한글 문서 본문의 압축을 풀 수 없습니다. 파일이 손상되었을 수 있습니다.');
       }
     }
-    collectTables(parseRecordTree(data), tables);
+    return parseRecordTree(data);
   });
+}
+
+/** .hwp 파일 버퍼에서 모든 표를 문서 순서대로 [{ rows, cells }]로 읽는다 (빈 표 포함) */
+function readHwpTables(buffer) {
+  const tables = [];
+  readSections(buffer).forEach((tree) => collectTables(tree, tables));
   return tables;
 }
 
-module.exports = { readHwpTables, cellsToRows, decodeParaText };
+/** 트리를 문서 순서대로(앞 → 뒤, 바깥 → 안) 돈다 */
+function eachRecord(node, visit) {
+  node.children.forEach((child) => {
+    visit(child);
+    eachRecord(child, visit);
+  });
+}
+
+// 묶음 서식 안의 서류 머리표: "[서식 1호]", "[서식 2-1호]", "[별지 3]", "[별지 제1호의2서식]"
+const DOCUMENT_MARK = /\[\s*(서식\s*[\d-]+\s*호|별지\s*[^\]]{1,14})\s*\]/;
+// 서류 제목: "현 장 확 인 서", "금융정보 등 제공 동의서", "진료비 확인 요청 위임장" … (끝의 [□신규 □변경]·(보장기관)은 떼고 본다)
+const DOCUMENT_TITLE = /(신청서|동의서|확인서|신고서|요청서|위임장|통보서|청구서|보고서|조사서|추천서|지정서|각서|명세서|계획서|서약서|의견서|증명서|진단서|소견서)$/;
+const titleOf = (text) => {
+  const line = text.replace(/\s+/g, ' ').trim();
+  const core = line.replace(/(\s*(\[[^\]]*\]|\([^)]*\)|（[^）]*）))+$/, '');
+  const compact = core.replace(/\s/g, '');
+  if (compact.length < 3 || compact.length > 30 || /[{}:※■<>]/.test(core) || !DOCUMENT_TITLE.test(compact)) return '';
+  // "현 장 확 인 서"처럼 한 글자씩 띄운 제목은 붙인다
+  return /^(\S\s)+\S$/.test(core) ? compact : line;
+};
+
+/**
+ * .hwp 메일머지 서식에서 필드와 서류 목차를 읽는다(한글 없이 등록 화면에서 보이기 위함).
+ * 반환: { fields: [{ name, count }] (처음 나온 순서), documents: [{ mark, title }] }
+ * - 필드: 한글 "메일 머지 표시"(%mmg) 컨트롤의 이름(첫 줄). 문단 글자에는 {{이름}}으로 보인다.
+ * - 목차: 머리표가 든 문단마다 한 서류. 제목은 그 뒤 몇 문단 안의 "…서/…장" 글자(띄어 쓴 제목은 붙인다).
+ */
+function readHwpFields(buffer) {
+  const counts = new Map();
+  const texts = [];
+  readSections(buffer).forEach((tree) =>
+    eachRecord(tree, (r) => {
+      if (r.tag === TAG_CTRL_HEADER && r.payload.length >= 11 && r.payload.readUInt32LE(0) === CTRL_ID_MAILMERGE) {
+        const len = r.payload.readUInt16LE(9);
+        const name = r.payload
+          .subarray(11, 11 + len * 2)
+          .toString('utf16le')
+          .split(/[\r\n]/)[0]
+          .trim();
+        if (name) counts.set(name, (counts.get(name) || 0) + 1);
+      } else if (r.tag === TAG_PARA_TEXT) {
+        texts.push(decodeParaText(r.payload));
+      }
+    })
+  );
+  return { fields: [...counts].map(([name, count]) => ({ name, count })), documents: documentOutline(texts) };
+}
+
+/**
+ * 문단 글자들(문서 순서)에서 서류 목차: [{ mark, title }]. 머리표("[서식 1호]")가 든 문단마다 한 서류이고,
+ * 제목은 그 뒤 몇 문단 안의 "…신청서·동의서·위임장 …". 머리표가 없는 서식은 제목만으로 만든다. .hwpx 서식도 쓴다.
+ */
+function documentOutline(texts) {
+  const documents = [];
+  texts.forEach((text, i) => {
+    const m = DOCUMENT_MARK.exec(text);
+    if (!m || documents.some((d) => d.at === i)) return;
+    // 같은 문단의 둘째 머리표("[서식 2-1호] 공통서식[별지 제1호의2서식]")는 법령 표기라 따로 세지 않는다
+    let title = '';
+    for (let j = i + 1; j < Math.min(texts.length, i + 26) && !title; j++) {
+      if (DOCUMENT_MARK.test(texts[j])) break;
+      title = titleOf(texts[j]);
+    }
+    documents.push({ at: i, mark: m[0].replace(/\s+/g, ' ').replace(/\[\s|\s\]/g, (x) => x.trim()), title });
+  });
+  // 머리표가 없는 서식(서울형 등)은 제목만으로 목차를 만든다
+  if (documents.length === 0) {
+    const seen = new Set();
+    texts.forEach((text, i) => {
+      const title = titleOf(text);
+      if (title && !seen.has(title)) {
+        seen.add(title);
+        documents.push({ at: i, mark: '', title });
+      }
+    });
+  }
+  return documents.map(({ mark, title }) => ({ mark, title }));
+}
+
+module.exports = { readHwpTables, readHwpFields, documentOutline, cellsToRows, decodeParaText };

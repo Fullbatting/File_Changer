@@ -3,7 +3,8 @@
 // 실행: tools\한글연결점검.bat (서식 .hwp/.hwpx 파일을 bat 위로 끌어다 놓으면 그 서식도 시험)
 //   node tools/hancom-check.js [서식 파일 ...] [--print]
 // 결과: 프로그램 폴더의 "한글연결점검_결과" 폴더에 보고서(점검보고서.txt)와 시험 파일(.hwpx·.pdf).
-// 시험에 쓰는 인적사항은 모두 가짜 예시 값이다.
+// 시험에 쓰는 인적사항은 모두 가짜 예시 값이다. 메일머지 필드({{이름}} 등)가 있는 서식은 서류 출력과 같은 방법으로,
+// 필드가 없는 서식은 자동 인식으로 채운다. .hwp를 끌어다 놓으면 한글로 .hwpx로 바꾼 뒤 필드가 그대로인지도 본다.
 
 const fs = require('fs');
 const path = require('path');
@@ -12,6 +13,24 @@ const { modelFromHwpx } = require('../form-model.js');
 const { recognize, summarize } = require('../form-recognize.js');
 const { resolveValues } = require('../field-dictionary.js');
 const { fillHwpx } = require('../form-fill.js');
+const { fillForm } = require('../print-job.js');
+const { inspectFormFile } = require('../form-library.js');
+const { fieldOf } = require('../merge-fields.js');
+
+// 메일머지 필드 서식 시험에 쓰는 가짜 예시 값(merge-fields.js의 입력 항목)
+const SAMPLE_INPUT = {
+  name: '홍길동',
+  rrn: '900101-1234567',
+  addr: '[예시 주소] ○○시 ○○로 00',
+  phone: '010-0000-0000',
+  careStart: '2026-01-02',
+  disease: '[예시 상병명]',
+  diseaseCode: 'C00.0',
+  diagnosisDate: '2026-01-01',
+  staffName: '[담당자]',
+  staffTitle: '[직위]',
+  staffPhone: '0000',
+};
 
 const ROOT = path.resolve(__dirname, '..');
 const OUT = path.join(ROOT, '한글연결점검_결과');
@@ -69,10 +88,30 @@ async function checkForm(file) {
     if (!c.ok) return;
   }
   let model;
+  let info;
   try {
     model = modelFromHwpx(fs.readFileSync(hwpx));
+    info = inspectFormFile(hwpx);
   } catch (err) {
     say(`[실패] .hwpx 읽기 — ${err.message}`);
+    return;
+  }
+  if (info.fields.length > 0) {
+    // 메일머지 필드 서식: 서류 출력과 같은 방법(print-job.js)으로 채운다
+    const unknown = info.fields.filter((f) => !fieldOf(f.name)).map((f) => f.name);
+    say(`[성공] 메일머지 필드 ${info.fields.length}개 · ${info.fields.reduce((n, f) => n + f.count, 0)}곳 — 서류 ${info.documents.length}종${unknown.length ? ` · 사전에 없는 필드: ${unknown.join(', ')}` : ''}`);
+    info.documents.forEach((d) => say(`        ${d.mark} ${d.title}`.trimEnd()));
+    if (path.extname(file).toLowerCase() === '.hwp') {
+      const before = require('../hwp-reader.js').readHwpFields(fs.readFileSync(file));
+      const same = JSON.stringify(before.fields) === JSON.stringify(info.fields);
+      say(`${same ? '[성공]' : '[확인 필요]'} .hwp와 바꾼 .hwpx의 필드가 같은지 — ${same ? '같음' : `.hwp ${before.fields.length}개 / .hwpx ${info.fields.length}개`}`);
+    }
+    const filled = fillForm({ mapping: {} }, fs.readFileSync(hwpx), SAMPLE_INPUT, { asks: Object.fromEntries(unknown.map((n) => [n, `[${n}]`])) });
+    const leftover = (require('../form-model.js').modelFromHwpx(filled.buffer).paragraphs.map((p) => p.text).join('\n').match(/\{\{[^{}]+\}\}/g) || []).length;
+    const filledPath = path.join(OUT, `${base}_채움시험.hwpx`);
+    fs.writeFileSync(filledPath, filled.buffer);
+    say(`${leftover === 0 ? '[성공]' : '[확인 필요]'} 예시 값으로 필드 ${filled.filled}곳 채우기${leftover ? ` — 안 채워진 {{필드}} ${leftover}곳` : ''} → ${path.basename(filledPath)}`);
+    await timed('채운 서식을 한글로 열어 PDF로 저장(모양 확인용)', () => runHancom('convert', { input: filledPath, output: path.join(OUT, `${base}_채움시험.pdf`) }));
     return;
   }
   const spots = recognize(model);

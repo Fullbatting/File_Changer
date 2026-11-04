@@ -1,0 +1,642 @@
+/* app.css — 서식 자동 기입 화면(서류 출력 · 서식 관리 · 설정). 예전 메일머지 화면은 styles.css */
+
+:root {
+  --fa-bg: #f3f5f8;
+  --fa-panel: #ffffff;
+  --fa-line: #dde2e8;
+  --fa-line-soft: #eef1f4;
+  --fa-text: #1a1f26;
+  --fa-text-2: #3b4552;
+  --fa-muted: #5a6472;
+  --fa-primary: #1d4f91;
+  --fa-primary-dark: #163d72;
+  --fa-primary-soft: #e8f0fb;
+  --fa-focus: #8db4ea;
+  --fa-ok: #0b6b5e;
+  --fa-ok-soft: #e3f5f1;
+  --fa-warn: #9a4a00;
+  --fa-warn-soft: #fff3e0;
+  --fa-danger: #b42318;
+  --fa-danger-soft: #fdecea;
+}
+
+body.fa {
+  font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+  background: var(--fa-bg);
+  color: var(--fa-text);
+}
+
+.fa :focus-visible {
+  outline: 3px solid var(--fa-focus);
+  outline-offset: 1px;
+}
+
+/* ---------- 머리 ---------- */
+.fa-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 24px;
+  padding: 12px 24px;
+  background: var(--fa-panel);
+  border-bottom: 1px solid var(--fa-line);
+}
+.fa-header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+.fa-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.fa-nav button {
+  height: 38px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fa-text-2);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.fa-nav button[aria-current="page"] {
+  background: var(--fa-primary-soft);
+  color: var(--fa-primary);
+  font-weight: 700;
+}
+.fa-nav button:hover {
+  background: #f0f3f7;
+}
+.fa-privacy {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--fa-ok);
+}
+
+/* ---------- 화면 틀 ---------- */
+.fa-screen {
+  max-width: 1360px;
+  margin: 0 auto;
+  padding: 20px 24px 28px;
+}
+.fa-columns {
+  display: grid;
+  grid-template-columns: minmax(320px, 5fr) minmax(380px, 7fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .fa-columns {
+    grid-template-columns: 1fr;
+  }
+}
+.fa-card {
+  background: var(--fa-panel);
+  border: 1px solid var(--fa-line);
+  border-radius: 12px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.fa-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.fa-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+.fa-card-head h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+.fa-card-head .fa-spacer {
+  flex: 1;
+}
+.fa-step {
+  width: 26px;
+  height: 26px;
+  border-radius: 13px;
+  background: var(--fa-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.fa-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fa-muted);
+}
+.fa-note.warn {
+  color: var(--fa-warn);
+}
+
+/* ---------- 입력 ---------- */
+.fa-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+.fa-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.fa-field.wide {
+  grid-column: 1 / -1;
+}
+.fa-field label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fa-text-2);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.fa-req {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--fa-danger);
+}
+.fa-field input,
+.fa-field select,
+.fa-input {
+  height: 40px;
+  padding: 0 11px;
+  border: 1px solid #c9d1db;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 15px;
+  background: #fff;
+  color: var(--fa-text);
+  min-width: 0;
+}
+.fa-field input[aria-invalid="true"] {
+  border-color: var(--fa-danger);
+  background: var(--fa-danger-soft);
+}
+.fa-hint {
+  font-size: 12px;
+  color: var(--fa-muted);
+}
+.fa-hint.bad {
+  color: var(--fa-danger);
+}
+.fa-subhead {
+  margin: 4px 0 -4px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--fa-text-2);
+}
+
+/* ---------- 버튼 ---------- */
+.fa-btn {
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 9px;
+  border: 1px solid #c9d1db;
+  background: #fff;
+  color: var(--fa-text-2);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.fa-btn:hover {
+  background: #f5f7fa;
+}
+.fa-btn.primary {
+  background: var(--fa-primary);
+  border-color: var(--fa-primary);
+  color: #fff;
+  font-weight: 700;
+}
+.fa-btn.primary:hover {
+  background: var(--fa-primary-dark);
+}
+.fa-btn.big {
+  height: 50px;
+  padding: 0 26px;
+  font-size: 16px;
+}
+.fa-btn.small {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.fa-btn.danger {
+  color: var(--fa-danger);
+}
+.fa-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.fa-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--fa-primary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* ---------- 고르기(기관·구분) ---------- */
+.fa-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fa-chip {
+  min-height: 40px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid #c9d1db;
+  background: #fff;
+  color: var(--fa-text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.fa-chip[aria-pressed="true"] {
+  background: var(--fa-primary);
+  border-color: var(--fa-primary);
+  color: #fff;
+  font-weight: 700;
+}
+.fa-chip .count {
+  font-size: 12px;
+  opacity: 0.8;
+}
+.fa-chip .tag {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--fa-ok-soft);
+  color: var(--fa-ok);
+}
+.fa-chip[aria-pressed="true"] .tag {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+.fa-segment {
+  display: inline-flex;
+  border: 1px solid #c9d1db;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.fa-segment label {
+  padding: 9px 18px;
+  font-size: 14px;
+  cursor: pointer;
+  background: #fff;
+}
+.fa-segment input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.fa-segment input:checked + span {
+  font-weight: 700;
+  color: var(--fa-primary);
+}
+.fa-segment label:has(input:checked) {
+  background: var(--fa-primary-soft);
+}
+.fa-segment label:has(input:focus-visible) {
+  outline: 3px solid var(--fa-focus);
+  outline-offset: -3px;
+}
+
+/* ---------- 서류 목록 ---------- */
+.fa-forms {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.fa-kind {
+  margin: 6px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fa-muted);
+}
+.fa-form {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 4px 12px;
+  align-items: start;
+  padding: 12px 14px;
+  border: 1px solid var(--fa-line);
+  border-radius: 10px;
+  background: #fff;
+}
+.fa-form.checked {
+  border-color: var(--fa-primary);
+  background: #f6f9fe;
+}
+.fa-form input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+}
+.fa-form .name {
+  font-size: 15px;
+  font-weight: 700;
+}
+.fa-form .docs {
+  font-size: 13px;
+  color: var(--fa-muted);
+  line-height: 1.5;
+}
+.fa-badge {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: var(--fa-ok-soft);
+  color: var(--fa-ok);
+}
+.fa-badge.warn {
+  background: var(--fa-warn-soft);
+  color: var(--fa-warn);
+}
+.fa-badge.muted {
+  background: #eef1f4;
+  color: var(--fa-muted);
+}
+.fa-empty {
+  padding: 18px;
+  border: 1px dashed #c9d1db;
+  border-radius: 10px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--fa-muted);
+}
+
+/* ---------- 출력 줄 ---------- */
+.fa-printbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: var(--fa-panel);
+  border: 1px solid var(--fa-line);
+}
+.fa-printbar .summary {
+  flex: 1 1 240px;
+  font-size: 14px;
+  color: var(--fa-text-2);
+}
+.fa-printbar .summary strong {
+  display: block;
+  font-size: 15px;
+  color: var(--fa-text);
+}
+.fa-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+.fa-counter button {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid #c9d1db;
+  background: #fff;
+  font-size: 18px;
+  cursor: pointer;
+}
+.fa-counter output {
+  min-width: 22px;
+  text-align: center;
+  font-weight: 700;
+}
+
+/* ---------- 서식 관리 ---------- */
+.fa-manage {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .fa-manage {
+    grid-template-columns: 1fr;
+  }
+}
+.fa-side {
+  background: var(--fa-panel);
+  border: 1px solid var(--fa-line);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fa-side button {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--fa-text);
+}
+.fa-side button[aria-current="true"] {
+  background: var(--fa-primary-soft);
+  color: var(--fa-primary);
+  font-weight: 700;
+}
+.fa-drop {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 2px dashed #aeb8c4;
+  border-radius: 12px;
+  background: #fff;
+  color: var(--fa-text-2);
+  font-size: 14px;
+}
+.fa-drop.dragover {
+  border-color: var(--fa-primary);
+  background: var(--fa-primary-soft);
+}
+.fa-table-wrap {
+  background: var(--fa-panel);
+  border: 1px solid var(--fa-line);
+  border-radius: 12px;
+  overflow-x: auto;
+}
+.fa-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.fa-table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: #f7f8fa;
+  color: var(--fa-text-2);
+  border-bottom: 1px solid var(--fa-line);
+  white-space: nowrap;
+}
+.fa-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--fa-line-soft);
+  vertical-align: top;
+}
+.fa-table tr:last-child td {
+  border-bottom: 0;
+}
+.fa-table td .sub {
+  font-size: 12px;
+  color: var(--fa-muted);
+  margin-top: 2px;
+}
+.fa-table td.actions {
+  white-space: nowrap;
+  text-align: right;
+}
+.fa-table input,
+.fa-table select {
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid #c9d1db;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 14px;
+  max-width: 100%;
+}
+
+/* ---------- 창 ---------- */
+.fa-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 28, 40, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 24px;
+}
+.fa-modal-card {
+  background: #fff;
+  border-radius: 14px;
+  padding: 22px 24px;
+  width: min(1100px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.fa-modal-card.narrow {
+  width: min(560px, 100%);
+}
+.fa-modal-card h3 {
+  margin: 0;
+  font-size: 18px;
+}
+.fa-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fa-progress {
+  height: 8px;
+  border-radius: 4px;
+  background: #e6eaf0;
+  overflow: hidden;
+}
+.fa-progress > div {
+  height: 100%;
+  background: var(--fa-primary);
+  transition: width 0.2s;
+}
+.fa-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+.fa-results li.bad {
+  color: var(--fa-danger);
+}
+
+/* ---------- 예전 메일머지 화면과 함께 쓰기 ---------- */
+body.fa main.content {
+  padding: 0;
+}
+body.fa .fa-legacy {
+  padding: 22px 24px;
+}
+body.fa #logArea {
+  height: 84px;
+}
+.fa-field.unused {
+  opacity: 0.6;
+}
+.fa-table td.nowrap {
+  white-space: nowrap;
+}
+.fa-table td.file {
+  min-width: 260px;
+  word-break: keep-all;
+}
+.fa-table td {
+  word-break: keep-all;
+}
+.fa-printbar .summary {
+  flex-basis: 100%;
+}
+.fa-field label.stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+}
+.fa-field label.stack input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+}

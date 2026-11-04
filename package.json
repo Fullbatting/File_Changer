@@ -1,7 +1,7 @@
 {
   "name": "doc-convert-mailmerge",
   "version": "1.0.0",
-  "description": "메일머지 자동기입: Word·한글(HWPX) 템플릿의 {{변수}}를 채워 문서 생성 (Electron)",
+  "description": "서식 자동 기입: 환자 인적사항을 한 번 넣으면 등록한 한글 서식(메일머지 필드)에 채워 바로 인쇄 (Electron)",
   "main": "main.js",
   "author": "",
   "license": "MIT",
