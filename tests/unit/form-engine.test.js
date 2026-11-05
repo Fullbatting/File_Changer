@@ -243,6 +243,23 @@ test('채우기: 바꾼 자리 밖의 XML은 그대로(고친 문단의 줄 배�
   preview.forEach((text, pid) => assert.strictEqual(filled.paragraphById.get(pid).text, text, pid));
 });
 
+test('채우기: zip 항목마다 원래 압축 방식을 지킨다(한글은 version.xml·미리보기 그림을 압축하지 않고 둔다)', () => {
+  const { zipMethods, writePlan } = require('../../src/engine/form-fill.js');
+  const zip = new PizZip();
+  zip.file('mimetype', 'application/hwp+zip', { compression: 'STORE' });
+  zip.file('version.xml', '<?xml version="1.0" encoding="UTF-8"?><hv:HCFVersion xmlns:hv="http://www.hancom.co.kr/hwpml/2011/version"/>', { compression: 'STORE' });
+  zip.file('Contents/section0.xml', `<?xml version="1.0" encoding="UTF-8"?><hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph"><hp:p id="0"><hp:run charPrIDRef="0"><hp:t>성명 {{이름}}</hp:t></hp:run></hp:p></hs:sec>`, { compression: 'DEFLATE' });
+  zip.file('Preview/PrvImage.png', Buffer.from([137, 80, 78, 71, 1, 2, 3]), { binary: true, compression: 'STORE' });
+  const src = zip.generate({ type: 'nodebuffer' });
+  const m = modelFromHwpx(src);
+  const p = m.paragraphs[0];
+  const out = writePlan(src, m, [{ spotId: 'x', paragraphId: p.id, start: 3, end: 9, text: '홍길동' }]);
+  assert.deepStrictEqual([...zipMethods(out)], [...zipMethods(src)]);
+  assert.deepStrictEqual([...zipMethods(out)].map(([n, k]) => `${n}:${k}`), ['mimetype:0', 'version.xml:0', 'Contents/section0.xml:8', 'Preview/PrvImage.png:0']);
+  assert.ok(new PizZip(out).file('Contents/section0.xml').asText().includes('성명 홍길동'));
+  assert.deepStrictEqual([...new PizZip(out).file('Preview/PrvImage.png').asUint8Array()], [137, 80, 78, 71, 1, 2, 3], '그림은 바이트 그대로');
+});
+
 /* ---------- 도구 ---------- */
 
 test('도구: 빈칸 맞추기·체크 표시·너비', () => {

@@ -206,6 +206,35 @@ function staleLayoutEdits(p) {
 }
 
 /**
+ * zip 안 항목마다 원래 압축 방식(0 = 저장만, 8 = 압축). 중앙 디렉터리를 직접 읽는다.
+ * 한글이 저장한 .hwpx는 mimetype·version.xml·미리보기 그림을 압축하지 않고 두는데, 이것을 압축해 다시 쓰면
+ * 한글이 파일을 열지 못한다. 그래서 다시 쓸 때 항목마다 원래 방식을 지킨다.
+ */
+function zipMethods(buffer) {
+  const methods = new Map();
+  const min = Math.max(0, buffer.length - 65557);
+  let eocd = -1;
+  for (let i = buffer.length - 22; i >= min; i--) {
+    if (buffer.readUInt32LE(i) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) return methods;
+  const count = buffer.readUInt16LE(eocd + 10);
+  let p = buffer.readUInt32LE(eocd + 16);
+  for (let n = 0; n < count && p + 46 <= buffer.length && buffer.readUInt32LE(p) === 0x02014b50; n++) {
+    const method = buffer.readUInt16LE(p + 10);
+    const nameLen = buffer.readUInt16LE(p + 28);
+    const extraLen = buffer.readUInt16LE(p + 30);
+    const commentLen = buffer.readUInt16LE(p + 32);
+    methods.set(buffer.slice(p + 46, p + 46 + nameLen).toString('utf8'), method);
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return methods;
+}
+
+/**
  * 글자 계획(planFill이나 메일머지가 만든 [{ spotId, paragraphId, start, end, text }])을 원문 XML에 적용한 새 .hwpx 버퍼.
  * model은 이 buffer로 만든 모델이어야 한다(바꾸지 않으므로 여러 번 다시 써도 된다 — 메일머지 일괄 생성).
  */
@@ -226,9 +255,14 @@ function writePlan(buffer, model, plan) {
     paragraphs.forEach((list, p) => edits.push(...paragraphXmlEdits(sec.xml, p, list), ...staleLayoutEdits(p)));
     zip.file(sec.name, applyEdits(sec.xml, edits));
   });
-  // HWPX(OCF)는 mimetype을 압축하지 않은 채 맨 앞에 둔다
-  const mime = zip.file('mimetype');
-  if (mime) zip.file('mimetype', mime.asText(), { compression: 'STORE' });
+  // 항목마다 원래 압축 방식을 지킨다(mimetype·version.xml·미리보기 그림은 한글이 압축하지 않고 둔다).
+  // 이름을 그대로 다시 넣으므로 순서(mimetype이 맨 앞)도 그대로다
+  const methods = zipMethods(buffer);
+  if (!methods.has('mimetype')) methods.set('mimetype', 0);
+  methods.forEach((method, name) => {
+    const entry = zip.file(name);
+    if (entry && method === 0) zip.file(name, entry.asUint8Array(), { binary: true, compression: 'STORE' });
+  });
   return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
@@ -242,4 +276,4 @@ function fillHwpx(buffer, spots, answers = {}) {
   return { buffer: writePlan(buffer, model, plan), plan };
 }
 
-module.exports = { fillHwpx, writePlan, planFill, previewTexts, mappingOf, displayWidth, padInto, checkInto, CHECK_MARK };
+module.exports = { fillHwpx, writePlan, zipMethods, planFill, previewTexts, mappingOf, displayWidth, padInto, checkInto, CHECK_MARK };
