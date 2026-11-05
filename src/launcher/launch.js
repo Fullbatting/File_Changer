@@ -2,6 +2,9 @@
 // run.bat이 부르는 시작 프로그램: 준비(처음·업데이트 때만) → 프로그램 실행 → 프로그램 화면이 뜬 것을 확인하면 끝낸다.
 // 이것이 끝나면 run.bat의 검은 창(cmd)도 닫힌다. 프로그램은 따로 떨어진 프로세스로 계속 돈다.
 // 문제가 생기면(오래된 Node.js, 설치 실패, 프로그램이 뜨지 않음) 오류 창으로 알린다.
+// Node.js 자체는 run.bat이 먼저 찾거나 내려받아 둔다(src/launcher/node-env.bat).
+// PC에 없는 것 가운데 패키지와 실행 엔진은 여기서 내려받는다. 한글(한컴오피스)은 유료 프로그램이라
+// 내려받을 수 없으므로, 처음 준비할 때 없으면 설치하라고 안내만 한다.
 //
 // 오래된 Node.js에서도 "버전이 낮다"는 안내까지는 해야 하므로 최신 문법을 쓰지 않는다.
 
@@ -67,15 +70,33 @@ function electronPath() {
   }
 }
 
-/** 오류 창(Windows는 메시지 상자, 그 밖에는 화면 글자) */
-function showError(message) {
-  console.error(`\n[오류] ${message}\n`);
+/** 메시지 상자(Windows). kind: 'Error' | 'Information'. 그 밖의 운영체제에서는 화면 글자만 */
+function showBox(message, title, kind) {
   if (process.platform !== 'win32') return;
   childProcess.spawnSync(
     'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', "Add-Type -AssemblyName PresentationFramework; [void][System.Windows.MessageBox]::Show($env:SWH_MESSAGE, $env:SWH_TITLE, 'OK', 'Error')"],
-    { env: Object.assign({}, process.env, { SWH_MESSAGE: message, SWH_TITLE: `${TITLE} - 오류` }), windowsHide: true }
+    ['-NoProfile', '-Command', "Add-Type -AssemblyName PresentationFramework; [void][System.Windows.MessageBox]::Show($env:SWH_MESSAGE, $env:SWH_TITLE, 'OK', $env:SWH_KIND)"],
+    { env: Object.assign({}, process.env, { SWH_MESSAGE: message, SWH_TITLE: title, SWH_KIND: kind }), windowsHide: true }
   );
+}
+
+/** 오류 창 */
+function showError(message) {
+  console.error(`\n[오류] ${message}\n`);
+  showBox(message, `${TITLE} - 오류`, 'Error');
+}
+
+/** 안내 창 */
+function showNotice(message) {
+  console.log(`\n[안내] ${message}\n`);
+  showBox(message, TITLE, 'Information');
+}
+
+/** 한글(한컴오피스)이 설치되어 있는지(자동 조작용 등록 이름이 있는지). Windows가 아니면 null */
+function hancomInstalled() {
+  if (process.platform !== 'win32') return null;
+  // 32비트 한글도 있으므로 64비트·32비트 등록을 모두 본다
+  return ['/reg:64', '/reg:32'].some((view) => childProcess.spawnSync('reg.exe', ['query', 'HKCR\\HWPFrame.HwpObject', view], { stdio: 'ignore', windowsHide: true }).status === 0);
 }
 
 /** 명령을 실행하고 출력은 이 창에 그대로 보인다. 반환: 성공 여부 */
@@ -94,7 +115,8 @@ function setup(reasons) {
   }
   // Electron 42부터는 패키지 설치 때 실행 파일을 내려받지 않으므로 직접 받는다(이미 있으면 바로 끝난다)
   console.log('\n[2/2] 프로그램 실행 엔진(Electron)을 확인합니다. 처음에는 내려받느라 몇 분 걸릴 수 있습니다.\n');
-  if (!runVisible('node node_modules/electron/install.js') || !electronPath()) {
+  // run.bat이 고른 Node.js(지금 이 프로그램을 돌리는 것)로 그대로 실행한다
+  if (!runVisible(`"${process.execPath}" node_modules/electron/install.js`) || !electronPath()) {
     throw new Error('프로그램 실행 엔진을 내려받지 못했습니다. 인터넷 연결 상태를 확인한 뒤 run.bat을 다시 실행하세요.');
   }
   fs.copyFileSync(path.join(ROOT, 'package.json'), MARKER);
@@ -166,7 +188,13 @@ async function main() {
     }
   }
   const result = await startApp(electronPath());
-  if (result.ok) return 0;
+  if (result.ok) {
+    // 처음 준비했을 때만 한 번 알린다(매번 띄우면 귀찮다). 한글이 없어도 서식 등록·입력은 된다
+    if (reasons.length && hancomInstalled() === false) {
+      showNotice('이 PC에 한글(한컴오피스)이 없습니다.\n한글은 유료 프로그램이라 자동으로 설치할 수 없습니다.\n서류를 출력하거나 한글 파일로 저장하려면 한글을 설치한 뒤 프로그램을 다시 여세요.');
+    }
+    return 0;
+  }
   // 프로그램이 스스로 오류 창을 띄운 경우(화면 준비 실패 등)에는 또 띄우지 않는다
   if (!result.shown) showError(result.error || '프로그램을 시작하지 못했습니다.');
   return 1;

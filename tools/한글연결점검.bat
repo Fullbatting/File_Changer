@@ -11,12 +11,8 @@ echo  시험할 서식(.hwp/.hwpx)이 있으면 이 파일 위로 끌어다 놓�
 echo  시험 중 한글에서 "접근 허용" 창이 뜨면 [모두 허용] 또는 [허용]을 누르세요.
 echo.
 
-where node >/dev/null 2>nul
-if errorlevel 1 (
-    echo [오류] Node.js가 설치되어 있지 않습니다. https://nodejs.org/ 에서 LTS 버전을 설치하세요.
-    pause
-    exit /b 1
-)
+call "%~dp0..\src\launcher\node-env.bat"
+if errorlevel 1 exit /b 1
 
 if not exist "node_modules" (
     echo 필요한 패키지를 설치합니다. 인터넷 연결이 필요하며 최초 1회만 몇 분 걸립니다.
