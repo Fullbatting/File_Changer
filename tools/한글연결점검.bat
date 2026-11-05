@@ -19,7 +19,7 @@ if not exist "node_modules" (
     call npm install
 )
 
-node tools\hancom-check.js %*
+"%SWH_NODE%" tools\hancom-check.js %*
 
 echo.
 echo 점검이 끝났습니다. 위 결과 폴더의 파일을 보내 주세요.

@@ -44,7 +44,7 @@ try {
   try {
     Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
   } catch {
-    throw ("Node.js를 내려받지 못했습니다. 인터넷 연결 상태를 확인한 뒤 run.bat을 다시 실행하세요." + [Environment]::NewLine + "(회사망이면 nodejs.org 접속이 허용되어야 합니다: " + $_.Exception.Message + ")")
+    throw ("Node.js를 내려받지 못했습니다. 인터넷 연결 상태를 확인한 뒤 run.bat을 다시 실행하세요." + [Environment]::NewLine + "(회사망이면 nodejs.org 접속이 허용되어야 합니다: " + $_.Exception.Message + ")" + [Environment]::NewLine + [Environment]::NewLine + "인터넷을 쓸 수 없는 PC라면, 인터넷이 되는 PC에서 run.bat으로 프로그램을 한 번 연 뒤 그 폴더를 통째로 이 PC에 옮겨 오세요.")
   }
 
   $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()

@@ -29,6 +29,14 @@ test('준비가 필요한지: 처음 · 업데이트(package.json이 준비 때�
   assert.ok(launch.setupReasons({ ...ok, electronPath: null })[0].includes('실행 엔진'));
 });
 
+test('준비 방법: Node.js 없이 실행 엔진이 돌리는 중이면(USB로 옮긴 폴더) 설치하지 않고 연다', () => {
+  const ready = { hasModules: true, electronPath: '/x/electron' };
+  assert.strictEqual(launch.setupPlan([], { ...ready, asElectron: true }), 'none');
+  assert.strictEqual(launch.setupPlan(['업데이트'], { ...ready, asElectron: false }), 'install');
+  assert.strictEqual(launch.setupPlan(['업데이트'], { ...ready, asElectron: true }), 'skip');
+  assert.strictEqual(launch.setupPlan(['처음'], { hasModules: false, electronPath: null, asElectron: false }), 'install');
+});
+
 /** 가짜 프로그램: spawn을 흉내 내고, 받은 환경 변수의 알림 파일에 결과를 쓰거나 끝난다 */
 function fakeSpawn(behave) {
   const calls = [];

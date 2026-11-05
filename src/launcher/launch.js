@@ -2,7 +2,8 @@
 // run.bat이 부르는 시작 프로그램: 준비(처음·업데이트 때만) → 프로그램 실행 → 프로그램 화면이 뜬 것을 확인하면 끝낸다.
 // 이것이 끝나면 run.bat의 검은 창(cmd)도 닫힌다. 프로그램은 따로 떨어진 프로세스로 계속 돈다.
 // 문제가 생기면(오래된 Node.js, 설치 실패, 프로그램이 뜨지 않음) 오류 창으로 알린다.
-// Node.js 자체는 run.bat이 먼저 찾거나 내려받아 둔다(src/launcher/node-env.bat).
+// Node.js 자체는 run.bat이 먼저 찾거나 내려받아 둔다(src/launcher/node-env.bat). 준비를 마친 폴더를
+// Node.js 없는 PC로 옮겼으면 폴더 안의 실행 엔진(Electron)이 Node.js 대신 이 파일을 돌린다(npm은 없음).
 // PC에 없는 것 가운데 패키지와 실행 엔진은 여기서 내려받는다. 한글(한컴오피스)은 유료 프로그램이라
 // 내려받을 수 없으므로, 처음 준비할 때 없으면 설치하라고 안내만 한다.
 //
@@ -28,6 +29,16 @@ function nodeVersionOk(version, min) {
   const want = min || MIN_NODE;
   const parts = String(version).replace(/^v/, '').split('.').map(Number);
   return parts[0] > want[0] || (parts[0] === want[0] && parts[1] >= want[1]);
+}
+
+/**
+ * 준비를 어떻게 할지. 까닭이 없으면 'none'. 실행 엔진이 Node.js 대신 돌리는 중(npm 없음)이면 설치를 못 하므로
+ * 패키지와 실행 엔진이 있는 한 'skip'(설치된 그대로 연다), 그 밖에는 'install'
+ */
+function setupPlan(reasons, state) {
+  if (!reasons.length) return 'none';
+  if (state.asElectron && state.hasModules && state.electronPath) return 'skip';
+  return 'install';
 }
 
 /**
@@ -173,13 +184,19 @@ async function main() {
     showError(`설치된 Node.js 버전(${process.versions.node})이 너무 낮습니다. ${MIN_NODE.join('.')} 이상이 필요합니다.\nhttps://nodejs.org/ 에서 최신 LTS 버전을 설치한 뒤 run.bat을 다시 실행하세요.`);
     return 1;
   }
-  const reasons = setupReasons({
+  const state = {
     pkg: readText(path.join(ROOT, 'package.json')),
     marker: readText(MARKER),
     hasModules: fs.existsSync(path.join(ROOT, 'node_modules')),
     electronPath: electronPath(),
-  });
-  if (reasons.length) {
+    asElectron: Boolean(process.versions.electron),
+  };
+  const reasons = setupReasons(state);
+  const plan = setupPlan(reasons, state);
+  if (plan === 'skip') {
+    console.log('[안내] 이 PC에는 Node.js가 없어 패키지 확인을 건너뛰고 설치된 그대로 엽니다.');
+    console.log('       업데이트한 뒤라면 인터넷이 되는 PC에서 run.bat으로 다시 준비해 폴더를 옮겨 오세요.');
+  } else if (plan === 'install') {
     try {
       setup(reasons);
     } catch (err) {
@@ -190,7 +207,7 @@ async function main() {
   const result = await startApp(electronPath());
   if (result.ok) {
     // 처음 준비했을 때만 한 번 알린다(매번 띄우면 귀찮다). 한글이 없어도 서식 등록·입력은 된다
-    if (reasons.length && hancomInstalled() === false) {
+    if (plan === 'install' && hancomInstalled() === false) {
       showNotice('이 PC에 한글(한컴오피스)이 없습니다.\n한글은 유료 프로그램이라 자동으로 설치할 수 없습니다.\n서류를 출력하거나 한글 파일로 저장하려면 한글을 설치한 뒤 프로그램을 다시 여세요.');
     }
     return 0;
@@ -210,4 +227,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { nodeVersionOk, setupReasons, readReady, startApp, READY_ENV, MIN_NODE };
+module.exports = { nodeVersionOk, setupReasons, setupPlan, readReady, startApp, READY_ENV, MIN_NODE };
