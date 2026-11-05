@@ -1,69 +1,15 @@
 // main.js
-// Electron 메인 프로세스: 앱 창 생성, 파일 다이얼로그(open/save) IPC 처리, 문제가 생기면 오류 창으로 알리기
+// Electron 메인 프로세스: 앱 창 만들기와 IPC(파일·폴더 대화상자, 사용자 데이터 폴더, 화면 준비 완료 알림).
+// 시작 알림·오류 창은 startup.js, 창·IPC 보안은 app-security.js.
 
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const { webPreferences, protectWindow, assertTrustedSender } = require('./app-security');
+const { reportLaunch, watchProcess, watchWindow } = require('./startup');
+
+watchProcess();
 
 let mainWindow = null;
-
-/* ---------- 오류 창 ----------
- * 프로그램은 검은 창(cmd) 없이 실행되므로, 문제가 생기면 화면에 오류 창으로 알린다. 같은 내용은 잠깐 동안 한 번만. */
-const ERROR_TITLE = '사회사업실 도우미 - 오류';
-const recentErrors = new Map();
-function showError(message, err) {
-  const detail = err ? String((err && err.message) || err) : '';
-  const key = `${message}|${detail}`;
-  const now = Date.now();
-  if (recentErrors.has(key) && now - recentErrors.get(key) < 5000) return;
-  recentErrors.set(key, now);
-  const text = detail ? `${message}\n\n${detail}` : message;
-  try {
-    if (app.isReady()) dialog.showErrorBox(ERROR_TITLE, text);
-    else console.error(text);
-  } catch (e) {
-    console.error(text);
-  }
-}
-
-process.on('uncaughtException', (err) => showError('예상하지 못한 오류가 발생했습니다. 같은 일이 되풀이되면 프로그램을 다시 실행하세요.', err));
-process.on('unhandledRejection', (err) => showError('예상하지 못한 오류가 발생했습니다. 같은 일이 되풀이되면 프로그램을 다시 실행하세요.', err));
-
-/** 화면 쪽 문제(준비 실패·멈춤·꺼짐·불러오기 실패)를 오류 창으로 */
-function watchWindow(win) {
-  const wc = win.webContents;
-  wc.on('preload-error', (e, preloadPath, err) => showError('프로그램 화면을 준비하지 못했습니다. run.bat을 두 번 눌러 다시 준비한 뒤 실행하세요.', err));
-  wc.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
-    if (isMainFrame && code !== -3) showError('프로그램 화면을 불러오지 못했습니다.', `${desc} (${code})`);
-  });
-  wc.on('render-process-gone', async (e, details) => {
-    if (details.reason === 'clean-exit' || win.isDestroyed()) return;
-    const r = await dialog.showMessageBox(win, {
-      type: 'error',
-      title: ERROR_TITLE,
-      message: '프로그램 화면이 갑자기 꺼졌습니다.',
-      detail: `입력하던 인적사항은 지워졌습니다. 다시 불러와 처음부터 입력하세요. (${details.reason}, 코드 ${details.exitCode})`,
-      buttons: ['다시 불러오기', '프로그램 닫기'],
-      defaultId: 0,
-      noLink: true,
-    });
-    if (win.isDestroyed()) return;
-    if (r.response === 0) wc.reload();
-    else win.close();
-  });
-  win.on('unresponsive', async () => {
-    const r = await dialog.showMessageBox(win, {
-      type: 'warning',
-      title: '사회사업실 도우미',
-      message: '프로그램이 응답하지 않습니다.',
-      detail: '한글로 큰 서식을 다루는 중이면 잠시 기다리면 돌아옵니다.',
-      buttons: ['기다리기', '프로그램 닫기'],
-      defaultId: 0,
-      noLink: true,
-    });
-    if (r.response === 1 && !win.isDestroyed()) win.destroy();
-  });
-}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -143,18 +89,17 @@ ipcMain.handle('dialog:saveFile', async (event, args = {}) => {
 });
 
 /**
- * 앱 사용자 데이터 폴더 경로 반환 (동의어 사전 저장용)
+ * 앱 사용자 데이터 폴더 경로(서식 보관함·설정 저장)
  * Windows: %APPDATA%/doc-convert-mailmerge, macOS: ~/Library/Application Support/doc-convert-mailmerge
- * (예전 통합 프로그램과 같은 폴더 이름을 그대로 써서, 저장해 둔 동의어 사전을 이어 쓴다)
+ * (예전 이름의 폴더를 그대로 써서 등록해 둔 서식·설정을 이어 쓴다)
  */
 ipcMain.handle('app:getUserDataPath', (event) => {
   assertTrustedSender(event, mainWindow);
   return app.getPath('userData');
 });
 
-
 /**
- * 폴더 선택 다이얼로그 (메일머지 일괄 생성 결과를 저장할 폴더 선택용)
+ * 폴더 선택 다이얼로그(서식 폴더째 추가, 채운 서식 저장 폴더)
  * args: { title, defaultPath }
  * 반환: 선택된 폴더 경로 (취소 시 null)
  */
@@ -170,4 +115,14 @@ ipcMain.handle('dialog:selectFolder', async (event, args = {}) => {
 
   if (result.canceled || result.filePaths.length === 0) return null;
   return result.filePaths[0];
+});
+
+/**
+ * 화면이 시작을 마쳤다(서식 보관함·설정까지 열림) 또는 실패했다: 시작 프로그램에 알려 run.bat의 검은 창을 닫게 한다.
+ * result: { ok: true } | { ok: false, error } — 실패면 화면이 이미 오류 창을 띄웠다
+ */
+ipcMain.handle('app:ready', (event, result = {}) => {
+  assertTrustedSender(event, mainWindow);
+  reportLaunch(result && result.ok === false ? { ok: false, error: `프로그램을 시작하지 못했습니다: ${String(result.error || '')}`, shown: true } : { ok: true });
+  return true;
 });
