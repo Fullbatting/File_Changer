@@ -305,6 +305,56 @@ test('인쇄: .hwp는 먼저 한글로 변환해 보관, 채운 임시 파일은
   assert.ok(noHancom[0].error.includes('Windows'));
 });
 
+test('한글로 직접 채우기: 바꿀 글자 목록(서식에 적힌 그대로, 연도는 월과 함께 먼저), 매핑(고정·비움·출력 때 입력)', () => {
+  const buf = hwpxWith([P(T('성명 '), F('이름'), T(' '), F('이름')), P(T('2026년 '), F('월1'), F('월2'), T('월')), P(F('기관'), F('메모'), F('보호자'))]);
+  const entry = { mapping: { 기관: { type: 'fixed', text: '[예시 병원]' }, 메모: { type: 'blank' }, 보호자: { type: 'ask' } } };
+  const pairs = job.replacementsFor(entry, buf, INPUT, { asks: { 보호자: '[예시 보호자]' } });
+  assert.deepStrictEqual(pairs, [
+    ['2026년 {{월1}}', '2027년 0'],
+    ['{{이름}}', '홍길동'],
+    ['{{월1}}', '0'],
+    ['{{월2}}', '8'],
+    ['{{기관}}', '[예시 병원]'],
+    ['{{메모}}', ''],
+    ['{{보호자}}', '[예시 보호자]'],
+  ]);
+  assert.strictEqual(job.replacementsFor({ mapping: {} }, buildHwpx([{ cells: [{ row: 0, col: 0, text: '성명' }, { row: 0, col: 1, text: '' }] }]), INPUT), null, '필드 없는 서식은 null');
+});
+
+test('인쇄: 채운 파일을 한글이 못 열면 원본을 한글로 열어 직접 바꿔 인쇄, 그것도 안 되면 두 가지를 함께 알림', async () => {
+  const ldir = fs.mkdtempSync(path.join(dir, 'fallback-'));
+  const L = lib.openLibrary(path.join(ldir, 'forms'));
+  const hwpx = path.join(ldir, '양주시청-긴급복지지원 신청서(세대주).hwpx');
+  fs.writeFileSync(hwpx, hwpxWith([P(T('성명 '), F('이름'))]));
+  const e = L.add(hwpx, { ...lib.classifyFileName(hwpx), ...lib.inspectFormFile(hwpx) });
+  const calls = [];
+  const fake = (second) => async (action, args) => {
+    calls.push({ action, file: args.file, replacements: args.replacements, copies: args.copies, output: args.output });
+    if (action === 'print') return { ok: false, error: '한글이 파일을 열지 못했습니다' };
+    return second;
+  };
+  const ok = await job.printForms(L, [e], INPUT, { copies: 3, hancom: fake({ ok: true }) });
+  assert.ok(ok[0].ok && ok[0].via === 'hancom', JSON.stringify(ok));
+  assert.deepStrictEqual(calls.map((c) => c.action), ['print', 'printReplace']);
+  assert.strictEqual(calls[1].file, L.sourcePath(e), '원본 서식을 연다');
+  assert.deepStrictEqual(calls[1].replacements, [['{{이름}}', '홍길동']]);
+  assert.strictEqual(calls[1].copies, 3);
+  assert.ok(!fs.existsSync(calls[0].file), '채운 임시 파일은 지운다');
+  calls.length = 0;
+  const bad = await job.printForms(L, [e], INPUT, { hancom: fake({ ok: false, error: '서식에 채우지 못한 칸이 남았습니다: {{주소}}' }) });
+  assert.ok(!bad[0].ok && bad[0].error.includes('열지 못했고') && bad[0].error.includes('{{주소}}'), bad[0].error);
+  calls.length = 0;
+  const other = await job.printForms(L, [e], INPUT, { hancom: async () => ({ ok: false, error: '[가짜] 프린터 오류' }) });
+  assert.strictEqual(other[0].error, '[가짜] 프린터 오류', '여는 문제가 아니면 다시 시도하지 않는다');
+  // 한글 파일로 저장: Windows에서는 한글이 원본을 열어 바꾼 뒤 저장
+  calls.length = 0;
+  const out = path.join(ldir, 'out.hwpx');
+  const saved = await job.saveFilled(L, e, INPUT, out, { hancom: fake({ ok: true }), platform: 'win32' });
+  assert.deepStrictEqual([saved.mode, calls[0].action, calls[0].output], ['hancom', 'printReplace', out]);
+  const offline = await job.saveFilled(L, e, INPUT, out, { hancom: fake({ ok: true }), platform: 'linux' });
+  assert.ok(offline.mode === 'fields' && textOf(fs.readFileSync(out)).includes('홍길동'), '한글이 없으면 서식 엔진이 직접 채운다');
+});
+
 /* ---------- 서류 출력 규칙(print-plan.js) ---------- */
 
 const entry = (id, over = {}) => ({ id, title: id, agency: '양주시청', kind: '긴급복지(국가형)', applicant: '세대주', favorite: false, documents: [{ mark: '[서식 1호]', title: '현장확인서' }], fields: [], mapping: {}, ...over });

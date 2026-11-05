@@ -52,9 +52,50 @@ const FORMAT_OF = (file) => {
   throw new Error(`한글로 다룰 수 없는 파일 형식입니다(${ext || '확장자 없음'})`);
 };
 
+// 형식을 알려 주고 열어 보고, 안 되면 한글이 형식을 스스로 판단하게 해서 한 번 더 연다
 const openFile = (file) => `  $opened = [bool]$hwp.Open(${psq(file)}, ${psq(FORMAT_OF(file))}, 'forceopen:true')
+  if (-not $opened) { $opened = [bool]$hwp.Open(${psq(file)}, '', 'forceopen:true') }
   Add-Step 'open' $opened ${psq(file)}
   if (-not $opened) { throw '한글이 파일을 열지 못했습니다' }
+`;
+
+/** 대화상자 없이 인쇄(부수 1~99, 프린터 이름은 고른 때만) */
+const printBlock = (args) => {
+  const copies = Math.max(1, Math.min(99, Number(args.copies) || 1));
+  return `  $set = $hwp.HParameterSet.HPrint
+  [void]$hwp.HAction.GetDefault('Print', $set.HSet)
+  $set.NumCopy = ${copies}
+  $set.Collate = 1
+${args.printer ? `  $set.PrinterName = ${psq(args.printer)}\n` : ''}  $printed = [bool]$hwp.HAction.Execute('Print', $set.HSet)
+  Add-Step 'print' $printed 'copies=${copies}'
+  if (-not $printed) { throw '한글이 인쇄를 시작하지 못했습니다' }
+`;
+};
+
+/**
+ * 한글의 "모두 바꾸기"로 문서의 글자를 바꾼다(찾을 글자 → 바꿀 글자). 한글이 직접 고치므로 파일 구조가 깨질 일이 없다.
+ * 바꾼 뒤 문서 글자에 {{…}}가 남았으면 멈춘다(빈칸인 채로 인쇄하지 않도록). 남은 이름은 leftover로 알린다(값은 남기지 않음).
+ */
+const replaceBlock = (pairs) => `  $fr = $hwp.HParameterSet.HFindReplace
+${pairs
+  .map(
+    ([find, to]) => `  [void]$hwp.HAction.GetDefault('AllReplace', $fr.HSet)
+  $fr.FindString = ${psq(find)}
+  $fr.ReplaceString = ${psq(to)}
+  try { $fr.IgnoreReplaceString = 0 } catch {}
+  try { $fr.FindRegExp = 0 } catch {}
+  try { $fr.ReplaceMode = 1 } catch {}
+  $fr.IgnoreMessage = 1
+  try { $fr.Direction = $hwp.FindDir('AllDoc') } catch {}
+  try { $fr.FindType = 1 } catch {}
+  [void]$hwp.HAction.Execute('AllReplace', $fr.HSet)
+`
+  )
+  .join('')}  Add-Step 'replace' $true '${pairs.length}'
+  $text = [string]$hwp.GetTextFile('TEXT', '')
+  $left = @([regex]::Matches($text, '\\{\\{[^{}\\r\\n]{1,30}\\}\\}') | ForEach-Object { $_.Value } | Select-Object -Unique)
+  $result.leftover = $left
+  if ($left.Count -gt 0) { throw ('서식에 채우지 못한 칸이 남았습니다: ' + ($left -join ', ')) }
 `;
 
 const saveAs = (file) => `  $saved = [bool]$hwp.SaveAs(${psq(file)}, ${psq(FORMAT_OF(file))}, '')
@@ -67,6 +108,7 @@ const saveAs = (file) => `  $saved = [bool]$hwp.SaveAs(${psq(file)}, ${psq(FORMA
  * - probe: 한글 연결·버전·보안 모듈 등록 상태
  * - convert: { input, output } — .hwp → .hwpx, 무엇이든 → .pdf
  * - print: { file, copies, printer } — 대화상자 없이 인쇄
+ * - printReplace: { file, replacements: [[찾을 글자, 바꿀 글자]], copies, printer, output? } — 원본을 열어 한글이 직접 바꾼 뒤 인쇄(output이면 저장)
  * - selftest: { hwpxOut, pdfOut } — 새 문서에 글자를 넣어 .hwpx·.pdf로 저장했다가 다시 열기
  */
 function buildScript(action, args = {}) {
@@ -82,15 +124,12 @@ function buildScript(action, args = {}) {
     body = `${openHwp(false)}${openFile(args.input)}${saveAs(args.output)}  $result.ok = Test-Path ${psq(args.output)}
 `;
   } else if (action === 'print') {
-    const copies = Math.max(1, Math.min(99, Number(args.copies) || 1));
-    body = `${openHwp(false)}${openFile(args.file)}  $set = $hwp.HParameterSet.HPrint
-  [void]$hwp.HAction.GetDefault('Print', $set.HSet)
-  $set.NumCopy = ${copies}
-  $set.Collate = 1
-${args.printer ? `  $set.PrinterName = ${psq(args.printer)}\n` : ''}  $printed = [bool]$hwp.HAction.Execute('Print', $set.HSet)
-  Add-Step 'print' $printed 'copies=${copies}'
-  if (-not $printed) { throw '한글이 인쇄를 시작하지 못했습니다' }
-  $result.ok = $true
+    body = `${openHwp(false)}${openFile(args.file)}${printBlock(args)}  $result.ok = $true
+`;
+  } else if (action === 'printReplace') {
+    // 원본 서식을 한글로 열어 {{필드}} 글자를 한글이 직접 값으로 바꾸고 인쇄(또는 output으로 저장). 원본 파일은 저장하지 않는다
+    const pairs = (args.replacements || []).filter(([find]) => find);
+    body = `${openHwp(false)}${openFile(args.file)}${replaceBlock(pairs)}${args.output ? saveAs(args.output) : printBlock(args)}  $result.ok = $true
 `;
   } else if (action === 'selftest') {
     body = `${openHwp(false)}  $ins = $hwp.HParameterSet.HInsertText

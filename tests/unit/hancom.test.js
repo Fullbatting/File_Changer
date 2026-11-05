@@ -38,6 +38,19 @@ test('스크립트: 작업마다 한글 생성 → 보안 모듈 → 작업 → 
   assert.ok(scripts.selftest.includes("SaveAs('C:\\a\\t.pdf', 'PDF', '')"));
 });
 
+test('스크립트: 한글로 직접 채우기(printReplace) — 원본 열기 → 모두 바꾸기 → 남은 {{}} 확인 → 인쇄 또는 저장, 열기는 형식 자동 판단으로 한 번 더', () => {
+  const p = buildScript('printReplace', { file: 'C:\\a\\서식.hwp', replacements: [['{{이름}}', "O'Neil"], ['{{메모}}', ''], ['', 'x']], copies: 2 });
+  assert.ok(balanced(p));
+  assert.strictEqual((p.match(/Execute\('AllReplace'/g) || []).length, 2, '빈 찾을 글자는 뺀다');
+  assert.ok(p.includes("$fr.FindString = '{{이름}}'") && p.includes("$fr.ReplaceString = 'O''Neil'") && p.includes("$fr.ReplaceString = ''"));
+  assert.ok(p.includes("GetTextFile('TEXT', '')") && p.includes('채우지 못한 칸이 남았습니다'));
+  assert.ok(p.indexOf('AllReplace') < p.indexOf("Execute('Print'") && p.includes('$set.NumCopy = 2'));
+  assert.ok(!p.includes('SaveAs'), '인쇄만 하고 원본은 저장하지 않는다');
+  const save = buildScript('printReplace', { file: 'C:\\a\\서식.hwp', replacements: [['{{이름}}', '홍길동']], output: 'C:\\b\\채움.hwpx' });
+  assert.ok(save.includes("$hwp.SaveAs('C:\\b\\채움.hwpx', 'HWPX', '')") && !save.includes("Execute('Print'"));
+  assert.ok(p.includes("$hwp.Open('C:\\a\\서식.hwp', '', 'forceopen:true')"), '형식을 비워 한 번 더 연다');
+});
+
 test('스크립트: 경로의 작은따옴표는 두 번 써서 안전하게, 부수는 1~99로, 모르는 형식·작업은 거부', () => {
   const s = buildScript('print', { file: "C:\\O'Neil\\서식.hwpx", copies: 500, printer: "3층 'A' 프린터" });
   assert.ok(s.includes("'C:\\O''Neil\\서식.hwpx'"));

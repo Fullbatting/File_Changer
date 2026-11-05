@@ -245,7 +245,7 @@ function init(app) {
     try {
       const asks = Object.fromEntries(e.fields.map((f) => [f.name, `[${f.name}]`]));
       const r = await saveFilled(app.library, e, SAMPLE_INPUT, out, { asks, hancom });
-      log(`시험 파일을 저장했습니다(${r.mode === 'fields' ? `필드 ${r.filled}곳` : `자동 인식 ${r.filled}곳`}): ${out}`, 'ok');
+      log(`시험 파일을 저장했습니다(${r.mode === 'hancom' ? `한글로 채움, ${r.filled}가지` : r.mode === 'fields' ? `필드 ${r.filled}곳` : `자동 인식 ${r.filled}곳`}): ${out}`, 'ok');
       alert(`가짜 예시 값으로 채운 시험 파일을 저장했습니다.\n한글에서 열어 글자 위치를 확인하세요.\n${out}`);
     } catch (err) {
       notifyError('시험 파일을 만들지 못했습니다', err);

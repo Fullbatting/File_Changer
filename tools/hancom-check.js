@@ -13,7 +13,7 @@ const { modelFromHwpx } = require('../src/engine/form-model.js');
 const { recognize, summarize } = require('../src/engine/form-recognize.js');
 const { resolveValues } = require('../src/engine/field-dictionary.js');
 const { fillHwpx } = require('../src/engine/form-fill.js');
-const { fillForm } = require('../src/autofill/print-job.js');
+const { fillForm, replacementsFor } = require('../src/autofill/print-job.js');
 const { inspectFormFile } = require('../src/autofill/form-library.js');
 const { unknownFields, SAMPLE_INPUT } = require('../src/autofill/merge-fields.js');
 const { readHwpFields } = require('../src/engine/hwp-reader.js');
@@ -100,6 +100,9 @@ async function checkForm(file) {
     fs.writeFileSync(filledPath, filled.buffer);
     say(`${leftover === 0 ? '[성공]' : '[확인 필요]'} 예시 값으로 필드 ${filled.filled}곳 채우기${leftover ? ` — 안 채워진 {{필드}} ${leftover}곳` : ''} → ${path.basename(filledPath)}`);
     await timed('채운 서식을 한글로 열어 PDF로 저장(모양 확인용)', () => runHancom('convert', { input: filledPath, output: path.join(OUT, `${base}_채움시험.pdf`) }));
+    // 서류 출력이 위 방법으로 안 될 때 쓰는 방법: 원본을 한글로 열어 {{필드}}를 한글이 직접 바꾼다
+    const replacements = replacementsFor({ mapping: {} }, fs.readFileSync(hwpx), SAMPLE_INPUT, { asks: Object.fromEntries(unknown.map((n) => [n, `[${n}]`])) });
+    await timed('원본을 한글로 열어 직접 바꾼 뒤 PDF로 저장(출력의 두 번째 방법)', () => runHancom('printReplace', { file, replacements, output: path.join(OUT, `${base}_한글로채움.pdf`) }));
     return;
   }
   const spots = recognize(model);
