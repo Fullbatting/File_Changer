@@ -131,7 +131,7 @@ function rrnSummary(rrn, today = new Date()) {
   const d = Number(digits.slice(4, 6));
   let age = today.getFullYear() - y;
   if (today.getMonth() + 1 < mo || (today.getMonth() + 1 === mo && today.getDate() < d)) age -= 1;
-  return `생년월일 ${digits.slice(0, 6)} · ${g % 2 === 1 ? '남' : '여'} · 만 ${age}세`;
+  return `생년월일 ${digits.slice(0, 6)}, ${g % 2 === 1 ? '남' : '여'}, 만 ${age}세`;
 }
 
 /** 필드 이름 → 사전 항목(없으면 null) */

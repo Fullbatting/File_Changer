@@ -119,4 +119,5 @@ tools/        한글 연결 점검 도구 (Windows)
 
 - [xlsx (SheetJS)](https://git.sheetjs.com/sheetjs/sheetjs) 0.20.3 — 구형 .hwp(OLE 복합 문서) 읽기에 쓰는 CFB 모듈 (Apache-2.0). npm 레지스트리의 xlsx는 0.18.5에서 업데이트가 멈춰 보안 수정이 없으므로, SheetJS 공식 배포처(`cdn.sheetjs.com`)에서 설치합니다.
 - [pizzip](https://github.com/open-xml-templating/pizzip) — .hwpx(zip) 읽고 쓰기 (MIT)
+- 화면 디자인: [Hallmark](https://github.com/Nutlope/hallmark)의 디자인 규칙과 Dose 테마(색·면·컨트롤 모양)를 따랐습니다 (MIT). 테마 글꼴 대신 한글 시스템 글꼴을 씁니다.
 

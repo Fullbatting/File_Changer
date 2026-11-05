@@ -72,7 +72,7 @@ function summaryOf(list, input, asks, copies) {
   const rrnProblem = checkRrn(input.rrn || '');
   const miss = missingForAll(list, input, asks);
   return {
-    title: `서식 ${list.length}개 · 서류 약 ${docCount}종 × ${copies}부`,
+    title: `서식 ${list.length}개, 서류 약 ${docCount}종, ${copies}부씩`,
     detail: rrnProblem ? `주민등록번호: ${rrnProblem}` : miss.length > 0 ? `빈칸으로 나갈 칸: ${miss.join(', ')}` : '모든 칸이 채워집니다',
   };
 }

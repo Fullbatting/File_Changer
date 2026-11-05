@@ -51,11 +51,11 @@ function init(app) {
     return h(
       'tr',
       { 'data-id': e.id },
-      h('td', {}, h('div', { style: 'font-weight: 700' }, `${e.favorite ? '★ ' : ''}${e.title}`), h('div', { class: 'sub' }, `${state.agency ? '' : `${e.agency} · `}${e.sourceName}`)),
+      h('td', {}, h('div', { style: 'font-weight: 700' }, `${e.favorite ? '★ ' : ''}${e.title}`), state.agency ? null : h('div', { class: 'sub' }, e.agency), h('div', { class: 'sub file' }, e.sourceName)),
       h('td', { class: 'nowrap' }, e.kind),
       h('td', { class: 'nowrap' }, e.applicant),
       h('td', { class: 'nowrap', title: e.documents.map(docLine).join('\n') }, `${e.documents.length}종`),
-      h('td', { class: 'nowrap' }, e.fields.length ? `${e.fields.length}개 · ${places}곳` : '없음(자동 인식)'),
+      h('td', { class: 'nowrap' }, e.fields.length ? `${e.fields.length}개 (${places}곳)` : '없음(자동 인식)'),
       h('td', { class: 'nowrap' }, h('span', { class: `fa-badge${st.label === '사용 중' ? '' : ' warn'}`, title: st.problems.join('\n') }, st.label)),
       h('td', { class: 'actions' }, actions.flatMap((b, i) => (i ? [' ', b] : [b])))
     );
@@ -90,7 +90,7 @@ function init(app) {
 
   function importRow(p) {
     const name = path.basename(p.file);
-    const note = p.error ? h('div', { class: 'sub', style: 'color: var(--danger)' }, `읽을 수 없음: ${p.error}`) : p.dup ? h('div', { class: 'sub' }, '이미 등록한 서식입니다(고르면 하나 더 등록)') : null;
+    const note = p.error ? h('div', { class: 'sub', style: 'color: var(--color-error)' }, `읽을 수 없음: ${p.error}`) : p.dup ? h('div', { class: 'sub' }, '이미 등록한 서식입니다(고르면 하나 더 등록)') : null;
     return h(
       'tr',
       {},
@@ -100,7 +100,7 @@ function init(app) {
       h('td', {}, select(APPLICANTS, p.applicant, (v) => (p.applicant = v), { 'aria-label': '구분' })),
       h('td', {}, h('input', { type: 'checkbox', checked: p.favorite, 'aria-label': '자주 쓰는 서식', onchange: (ev) => (p.favorite = ev.target.checked) })),
       h('td', {}, h('input', { value: p.title, 'aria-label': '서식 이름', oninput: (ev) => (p.title = ev.target.value.trim() || p.title) })),
-      h('td', {}, `필드 ${p.fields.length}개 · 서류 ${p.documents.length}종`, p.unknown.length ? h('div', { class: 'sub', style: 'color: var(--warn)' }, `사전에 없는 필드: ${p.unknown.join(', ')}`) : null)
+      h('td', {}, `필드 ${p.fields.length}개, 서류 ${p.documents.length}종`, p.unknown.length ? h('div', { class: 'sub', style: 'color: var(--color-muted)' }, `사전에 없는 필드: ${p.unknown.join(', ')}`) : null)
     );
   }
 
@@ -166,7 +166,7 @@ function init(app) {
         await ensureHwpx(app.library, e, { hancom });
         log(`변환 완료: ${e.title}`, 'ok');
       } catch (err) {
-        log(`변환 실패: ${e.title} — ${err.message}`, 'warn');
+        log(`변환 실패: ${e.title}: ${err.message}`, 'warn');
       }
     }
     changed();
@@ -203,7 +203,7 @@ function init(app) {
       },
       { 'aria-label': `${f.name} 채울 값` }
     );
-    return h('tr', {}, h('td', {}, `{{${f.name}}}`, known ? null : h('div', { class: 'sub', style: 'color: var(--warn)' }, '사전에 없는 필드')), h('td', {}, `${f.count}곳`), h('td', {}, sel, ' ', text));
+    return h('tr', {}, h('td', {}, `{{${f.name}}}`, known ? null : h('div', { class: 'sub', style: 'color: var(--color-muted)' }, '사전에 없는 필드')), h('td', {}, `${f.count}곳`), h('td', {}, sel, ' ', text));
   }
 
   function openReview(id) {
@@ -211,8 +211,8 @@ function init(app) {
     reviewing = { id, mapping: JSON.parse(JSON.stringify(e.mapping || {})), meta: { title: e.title, agency: e.agency, kind: e.kind, applicant: e.applicant, favorite: e.favorite } };
     replace($('reviewMeta'), metaFields(reviewing.meta));
     fillAgencyList(app.library.agencies().map((a) => a.name));
-    $('reviewTitle').textContent = `서식 검토 — ${e.sourceName}`;
-    replace($('reviewDocs'), e.documents.length ? e.documents.map(docLine).join(' · ') : '(목차를 찾지 못했습니다)');
+    $('reviewTitle').textContent = `서식 검토: ${e.sourceName}`;
+    replace($('reviewDocs'), e.documents.length ? e.documents.map(docLine).join(', ') : '(목차를 찾지 못했습니다)');
     replace(
       $('reviewFields'),
       e.fields.length === 0
@@ -255,7 +255,7 @@ function init(app) {
 
   function removeEntry(id) {
     const e = app.library.get(id);
-    if (!confirm(`"${e.title}"(${e.agency} · ${e.applicant}) 서식을 목록에서 지울까요? 원본 파일은 그대로 있습니다.`)) return;
+    if (!confirm(`"${e.title}"(${e.agency}, ${e.applicant}) 서식을 목록에서 지울까요? 원본 파일은 그대로 있습니다.`)) return;
     app.library.remove(id);
     log(`서식을 지웠습니다: ${e.title}`);
     changed();

@@ -146,7 +146,7 @@ function init(app) {
             )
           )
     );
-    $('agencyNote').textContent = state.suggested.length > 0 ? `주소에 맞는 기관: ${state.suggested.join(', ')}` : state.input.addr ? '주소에 맞는 기관이 없습니다 — 직접 고르세요' : '';
+    $('agencyNote').textContent = state.suggested.length > 0 ? `주소에 맞는 기관: ${state.suggested.join(', ')}` : state.input.addr ? '주소에 맞는 기관이 없습니다. 직접 고르세요' : '';
   }
 
   document.querySelectorAll('input[name="applicant"]').forEach((r) =>
@@ -169,7 +169,7 @@ function init(app) {
   function formItem(entry) {
     const id = `pick-${entry.id}`;
     const on = state.checked.has(entry.id);
-    const docs = entry.documents.map((d) => d.title || d.mark).filter(Boolean).join(' · ');
+    const docs = entry.documents.map((d) => d.title || d.mark).filter(Boolean).join(', ');
     return h(
       'li',
       { class: `fa-form${on ? ' checked' : ''}` },
@@ -201,7 +201,7 @@ function init(app) {
     [...state.checked].forEach((id) => {
       if (!list.some((e) => e.id === id)) state.checked.delete(id);
     });
-    $('formsNote').textContent = state.agency ? `${state.agency} · ${state.applicant} 서식 ${list.length}개` : '';
+    $('formsNote').textContent = state.agency ? `${state.agency} ${state.applicant}용 서식 ${list.length}개` : '';
     if (list.length === 0) {
       replace($('formList'), h('div', { class: 'fa-empty' }, state.agency ? `${state.agency}에 ${state.applicant}용 서식이 없습니다.` : '제출 기관을 고르세요.'));
       return;
@@ -276,12 +276,12 @@ function init(app) {
     },
     step(i, total, entry) {
       $('printProgress').style.width = `${Math.round((i / total) * 100)}%`;
-      $('printStatus').textContent = `${i + 1}/${total} · ${entry.title}`;
+      $('printStatus').textContent = `${i + 1}/${total}: ${entry.title}`;
     },
     done(results, note) {
       $('printProgress').style.width = '100%';
       $('printStatus').textContent = note;
-      replace($('printResults'), results.map((r) => h('li', { class: r.ok ? '' : 'bad' }, r.ok ? `✓ ${r.title}` : `✗ ${r.title} — ${r.error}`)));
+      replace($('printResults'), results.map((r) => h('li', { class: r.ok ? '' : 'bad' }, r.ok ? `✓ ${r.title}` : `✗ ${r.title}: ${r.error}`)));
       $('printClose').hidden = false;
       $('printClose').focus();
     },
@@ -309,7 +309,7 @@ function init(app) {
       clearPerson();
       progress.done(results, '출력을 마쳤습니다. 인적사항을 지웠습니다.');
     } else {
-      progress.done(results, '일부 서류를 출력하지 못했습니다. 인적사항은 다시 출력할 수 있게 남겨 두었습니다 — 다 끝나면 [새로 입력]으로 지우세요.');
+      progress.done(results, '일부 서류를 출력하지 못했습니다. 인적사항은 다시 출력할 수 있게 남겨 두었습니다. 다 끝나면 [새로 입력]으로 지우세요.');
     }
     app.changed('library'); // 처음 출력하며 한글로 바꾼 서식이 있으면 상태가 바뀐다
   });
@@ -349,7 +349,7 @@ function init(app) {
   function renderPrinterNote() {
     $('printerNote').textContent =
       process.platform === 'win32'
-        ? `프린터: ${app.settings.printer || '기본 프린터'} · 한글로 바로 인쇄합니다(채운 임시 파일은 인쇄 뒤 바로 지웁니다)`
+        ? `프린터: ${app.settings.printer || '기본 프린터'}. 한글로 바로 인쇄합니다(채운 임시 파일은 인쇄 뒤 바로 지웁니다)`
         : '이 PC에서는 한글로 바로 인쇄할 수 없습니다(Windows와 한글이 필요). [한글 파일로 저장]을 쓰세요.';
   }
 

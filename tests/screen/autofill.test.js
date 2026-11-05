@@ -57,7 +57,7 @@ app.whenReady().then(async () => {
   record('등록 확인 창: 서식 3개', (await visible('importModal')) && rows.length === 3, JSON.stringify(rows));
   record('분류: 양주시청 · 긴급복지(국가형) · 세대주/세대원', byFile('(세대주)').agency === '양주시청' && byFile('(세대주)').kind === '긴급복지(국가형)' && byFile('(세대주)').applicant === '세대주' && byFile('(세대원)').applicant === '세대원', JSON.stringify(rows));
   record('분류: 공통 암환자 서식', byFile('암환자').agency === '공통 서식' && byFile('암환자').kind === '암환자 의료비' && byFile('암환자').title === '암환자의료비등록신청서', JSON.stringify(byFile('암환자')));
-  record('필드·서류 목차와 사전에 없는 필드 안내', byFile('(세대주)').info.startsWith('필드 23개 · 서류 3종') && byFile('암환자').info.includes('사전에 없는 필드: 보호자'), `${byFile('(세대주)').info} / ${byFile('암환자').info}`);
+  record('필드·서류 목차와 사전에 없는 필드 안내', byFile('(세대주)').info.startsWith('필드 23개, 서류 3종') && byFile('암환자').info.includes('사전에 없는 필드: 보호자'), `${byFile('(세대주)').info} / ${byFile('암환자').info}`);
   await js(`document.getElementById('importConfirm').click(); true;`);
   await sleep(500);
   const table = await js(`[...document.querySelectorAll('#formsTableBody tr')].map((tr) => tr.cells[0].textContent + ' | ' + tr.cells[5].textContent)`);
@@ -91,7 +91,7 @@ app.whenReady().then(async () => {
   await sleep(200);
   const chips = await js(`[...document.querySelectorAll('#agencyChips .fa-chip')].map((b) => b.textContent + '|' + b.getAttribute('aria-pressed'))`);
   record('주소(양주시)로 양주시청을 추천해 고름', chips.some((c) => c.startsWith('양주시청') && c.includes('주소로 추천') && c.endsWith('|true')), JSON.stringify(chips));
-  record('주민등록번호 안내: 생년월일 6자리 · 성별', (await text('#in-rrn-hint')).startsWith('생년월일 900101 · 남'), await text('#in-rrn-hint'));
+  record('주민등록번호 안내: 생년월일 6자리 · 성별', (await text('#in-rrn-hint')).startsWith('생년월일 900101, 남'), await text('#in-rrn-hint'));
   let forms = await js(`[...document.querySelectorAll('#formList .fa-form')].map((li) => li.textContent)`);
   record('세대주: 양주시청 세대주 서식 하나만(미리 골라 둠)', forms.length === 1 && forms[0].includes('(세대주)'), JSON.stringify(forms));
   record('고른 서식에 진료기간이 있으면 진료 정보 칸이 보임', (await visible('careBlock')) && (await js(`!document.querySelector('[data-key="careStart"]').hidden && document.querySelector('[data-key="disease"]').hidden`)), 'care fields');
