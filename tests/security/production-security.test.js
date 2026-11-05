@@ -18,6 +18,8 @@ dialog.showOpenDialog = async (win, options) => {
   const paths = open.shift() || [];
   return { canceled: paths.length === 0, filePaths: paths };
 };
+const errorBoxes = [];
+dialog.showErrorBox = (title, text) => errorBoxes.push({ title, text });
 dialog.showSaveDialog = async (win, options) => {
   calls.push({ kind: 'save', options });
   const filePath = saves.shift();
@@ -84,6 +86,16 @@ async function run() {
   // 서식 보관함은 사용자 데이터 폴더(IPC로 받은 곳) 안에 둔다
   const stored = fs.readdirSync(userData);
   record('실제 사용자 데이터 IPC와 서식 보관함 위치', stored.includes('forms') || stored.includes('form-library'), stored);
+
+  // 검은 창 없이 실행되므로 문제는 오류 창으로: 화면 준비 실패(메인), 화면 코드에서 처리 못 한 오류(화면)
+  win.webContents.emit('preload-error', {}, 'preload.js', new Error('[시험] 모듈을 찾을 수 없음'));
+  await js(`window.__alerts = []; window.alert = (m) => window.__alerts.push(String(m)); setTimeout(() => { throw new Error('[시험] 처리 못 한 오류'); }); Promise.reject(new Error('[시험] 처리 못 한 약속')); true;`);
+  await sleep(300);
+  const alerts = await js('window.__alerts');
+  record('문제가 생기면 오류 창으로 알림(검은 창 없이 실행)',
+    errorBoxes.some((b) => b.title.includes('오류') && b.text.includes('화면을 준비하지 못했습니다') && b.text.includes('[시험] 모듈')) &&
+    alerts.some((a) => a.includes('예상하지 못한 오류') && a.includes('[시험] 처리 못 한 오류')) &&
+    alerts.some((a) => a.includes('[시험] 처리 못 한 약속')), { errorBoxes, alerts });
 
   const before = calls.length;
   const outsider = new BrowserWindow({
