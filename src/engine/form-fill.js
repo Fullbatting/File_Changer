@@ -197,6 +197,15 @@ function paragraphXmlEdits(xml, p, edits) {
 }
 
 /**
+ * 고친 문단의 줄 배치 정보(<hp:linesegarray>)를 지우는 편집. 한글은 문단마다 "몇 번째 글자에서 줄이 바뀌는지"를
+ * 저장해 두는데, 글자를 바꾸면 이 값이 맞지 않게 된다(좁은 칸의 "{{1}}"이 세 줄로 저장돼 있다가 한 글자가 되는 등).
+ * 맞지 않는 값이 남으면 한글이 파일이 손상됐다며 열지 않는다. 지우면 한글이 열 때 줄을 다시 나눈다.
+ */
+function staleLayoutEdits(p) {
+  return p.el.children.filter((c) => c.type === 'el' && c.local === 'linesegarray').map((c) => ({ start: c.start, end: c.end, text: '' }));
+}
+
+/**
  * 글자 계획(planFill이나 메일머지가 만든 [{ spotId, paragraphId, start, end, text }])을 원문 XML에 적용한 새 .hwpx 버퍼.
  * model은 이 buffer로 만든 모델이어야 한다(바꾸지 않으므로 여러 번 다시 써도 된다 — 메일머지 일괄 생성).
  */
@@ -214,7 +223,7 @@ function writePlan(buffer, model, plan) {
   bySection.forEach((paragraphs, si) => {
     const sec = model.sections[si];
     const edits = [];
-    paragraphs.forEach((list, p) => edits.push(...paragraphXmlEdits(sec.xml, p, list)));
+    paragraphs.forEach((list, p) => edits.push(...paragraphXmlEdits(sec.xml, p, list), ...staleLayoutEdits(p)));
     zip.file(sec.name, applyEdits(sec.xml, edits));
   });
   // HWPX(OCF)는 mimetype을 압축하지 않은 채 맨 앞에 둔다

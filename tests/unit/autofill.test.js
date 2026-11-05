@@ -250,6 +250,20 @@ test('채우기(메일머지 필드): 글상자 안·글상자 속 글상자·�
   assert.strictEqual(t.split('홍길동').length, 2);
 });
 
+test('채우기: 고친 문단의 줄 배치 정보(linesegarray)는 지워 한글이 다시 나누게 하고, 손대지 않은 문단은 그대로', () => {
+  // 실제 서식: 주민등록번호 한 자리 칸의 "{{1}}"이 좁은 칸에서 세 줄(textpos 0, 10, 12)로 저장돼 있다가 한 글자가 된다
+  const seg = (...pos) => `<hp:linesegarray>${pos.map((t) => `<hp:lineseg textpos="${t}" vertpos="0" vertsize="1000" textheight="1000" baseline="850" spacing="300" horzpos="0" horzsize="800" flags="393216"/>`).join('')}</hp:linesegarray>`;
+  const PL = (runs, layout) => `<hp:p id="0">${runs}${layout}</hp:p>`;
+  const buf = hwpxWith([PL(F('1'), seg(0, 10, 12)), PL(T('손대지 않는 문단'), seg(0, 8)), PL(T('성명 ') + F('이름'), seg(0))]);
+  const r = job.fillForm({ mapping: {} }, buf, INPUT);
+  const xml = new PizZip(r.buffer).file('Contents/section0.xml').asText();
+  const paras = xml.match(/<hp:p id="0">[\s\S]*?<\/hp:p>/g);
+  assert.strictEqual(paras.length, 3);
+  assert.ok(!paras[0].includes('linesegarray') && paras[0].includes('<hp:t>9</hp:t>'), paras[0]);
+  assert.ok(paras[1].includes('textpos="8"'), '손대지 않은 문단의 줄 배치는 남는다');
+  assert.ok(!paras[2].includes('linesegarray') && paras[2].includes('홍길동'), paras[2]);
+});
+
 test('채우기(필드 없는 서식): 자동 인식으로 표 칸을 채운다', () => {
   const buf = buildHwpx([{ cells: [{ row: 0, col: 0, text: '성명' }, { row: 0, col: 1, text: '' }, { row: 0, col: 2, text: '주민등록번호' }, { row: 0, col: 3, text: '' }] }]);
   const r = job.fillForm({ mapping: {} }, buf, INPUT);

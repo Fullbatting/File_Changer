@@ -225,11 +225,14 @@ test('채우기: 본인 신청이면 신청인 칸은 비우고 서명란은 환
   assert.ok(/신청인과의 관계 : +\(대리신청의 경우\)/.test(cellText(res, tid, 20, 0)), '관계 칸은 비움');
 });
 
-test('채우기: 바꾼 자리 밖의 XML은 그대로, mimetype은 압축하지 않음, 미리보기 글자 = 실제 결과', () => {
+test('채우기: 바꾼 자리 밖의 XML은 그대로(고친 문단의 줄 배치 정보만 빠짐), mimetype은 압축하지 않음, 미리보기 글자 = 실제 결과', () => {
   const a = new PizZip(hwpx).file('Contents/section0.xml').asText();
   const b = new PizZip(out.buffer).file('Contents/section0.xml').asText();
-  const strip = (x) => x.replace(/<hp:t>[^<]*<\/hp:t>|<hp:t\/>|<hp:t><\/hp:t>|<hp:run charPrIDRef="3"\/>|<hp:run charPrIDRef="3">/g, '');
+  const LAYOUT = /<hp:linesegarray>[\s\S]*?<\/hp:linesegarray>/g;
+  const strip = (x) => x.replace(LAYOUT, '').replace(/<hp:t>[^<]*<\/hp:t>|<hp:t\/>|<hp:t><\/hp:t>|<hp:run charPrIDRef="3"\/>|<hp:run charPrIDRef="3">/g, '');
   assert.strictEqual(strip(a).replace(/<\/hp:run>/g, ''), strip(b).replace(/<\/hp:run>/g, ''));
+  const edited = new Set(planFill(model, spots, answers).map((e) => e.paragraphId)).size;
+  assert.strictEqual((a.match(LAYOUT) || []).length - (b.match(LAYOUT) || []).length, edited, '줄 배치 정보는 고친 문단에서만 빠진다');
   const zip = new PizZip(out.buffer);
   assert.strictEqual(zip.file('mimetype').asText(), 'application/hwp+zip');
   // zip 첫 항목이 mimetype이고 압축 방식 0(저장만)인지 파일 머리 바이트로 확인
