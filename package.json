@@ -1,7 +1,7 @@
 {
   "name": "doc-convert-mailmerge",
   "version": "1.0.0",
-  "description": "서식 자동 기입: 환자 인적사항을 한 번 넣으면 등록한 한글 서식(메일머지 필드)에 채워 바로 인쇄 (Electron)",
+  "description": "사회사업실 도우미: 환자 인적사항을 한 번 넣으면 등록한 한글 서식(메일머지 필드)에 채워 바로 인쇄 (Electron)",
   "main": "src/main/main.js",
   "author": "",
   "license": "MIT",

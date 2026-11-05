@@ -1,4 +1,5 @@
 /* Hallmark · shape: app screen · genre: modern-minimal · theme: dose · deal: manual · dose: white · redesign: full
+ * name: 사회사업실 도우미 · polish: mark and tab icons, aligned columns, quieter tray, notes under the form name, dashed drop tray
  * nav: top bar, wordmark and three tabs (three destinations do not earn a sidebar) · signature: the print slip, a pharmacy label that says what goes out and how many · states: empty, filled, checked, needs review, printing, done, failed
  * axes: paper warm / one pharmacy green / plastic tray for choices / label for the action · contrast: pass · v2.0.0 */
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V3 · weakest: V, an app shell is meant to be familiar; the slip and the tray carry the identity instead of the layout */
@@ -143,11 +144,27 @@ h4 {
   background: var(--color-surface);
 }
 .fa-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
   font-family: var(--font-display);
   font-size: var(--text-lg);
   font-weight: 700;
   letter-spacing: var(--tracking-display);
   white-space: nowrap;
+}
+.fa-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-input);
+  background: linear-gradient(var(--color-accent), var(--color-accent-deep));
+  color: var(--color-accent-ink);
+  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--glint) 45%, transparent), 0 2px 0 var(--color-accent-deep);
+}
+.fa-icon {
+  flex: none;
 }
 .fa-nav {
   display: flex;
@@ -156,6 +173,9 @@ h4 {
 }
 .fa-nav button {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
   padding: 0 var(--space-md);
   border: 0;
   background: transparent;
@@ -177,6 +197,14 @@ h4 {
 .fa-nav button[aria-current="page"] {
   color: var(--color-ink);
 }
+.fa-nav button[aria-current="page"] .fa-icon {
+  color: var(--color-accent);
+}
+@media (hover: hover) {
+  .fa-nav button:not([aria-current="page"]):hover {
+    color: var(--color-ink-2);
+  }
+}
 .fa-nav button[aria-current="page"]::after {
   background: var(--color-accent);
 }
@@ -184,10 +212,24 @@ h4 {
   outline-offset: -4px;
 }
 .fa-privacy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
   margin-left: auto;
-  color: var(--color-muted);
-  font-size: var(--text-sm);
-  text-align: right;
+  padding: var(--space-2xs) var(--space-sm);
+  border-radius: var(--radius-pill);
+  background: var(--color-paper-2);
+  color: var(--color-ink-2);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.fa-privacy .fa-icon {
+  color: var(--color-accent-deep);
+}
+@media (max-width: 60rem) {
+  .fa-privacy {
+    display: none;
+  }
 }
 
 .fa-content {
@@ -207,12 +249,12 @@ h4 {
   padding: var(--space-lg);
   border-radius: var(--radius-card);
   background: var(--color-surface);
-  box-shadow: var(--shadow-card);
+  box-shadow: 0 0 0 var(--rule-hair) color-mix(in oklab, var(--color-rule) 70%, transparent), var(--shadow-card);
 }
 
 .fa-tray {
   --t: var(--p-wed);
-  padding: var(--space-lg);
+  padding: var(--space-md) var(--space-lg) var(--space-lg);
   border-radius: var(--radius-card);
   background: linear-gradient(color-mix(in oklab, var(--glint) 32%, transparent), transparent 18%), color-mix(in oklab, var(--t) 62%, transparent);
   box-shadow: inset 0 1.5px 0 var(--glint), inset 0 -24px 36px -28px color-mix(in oklab, var(--t) 45%, var(--color-ink));
@@ -261,7 +303,13 @@ h4 {
   display: grid;
   grid-template-columns: minmax(0, 6fr) minmax(0, 5fr);
   gap: var(--space-lg);
-  align-items: start;
+  align-items: stretch;
+}
+.fa-desk > .fa-person {
+  align-self: stretch;
+}
+.fa-flow > .fa-slip {
+  margin-top: auto;
 }
 @media (max-width: 60rem) {
   .fa-desk {
@@ -337,6 +385,9 @@ h4 {
   min-height: 1lh;
   color: var(--color-muted);
   font-size: var(--text-xs);
+}
+.fa-hint:empty {
+  display: none;
 }
 .fa-hint.bad {
   color: var(--color-error);
@@ -1004,4 +1055,82 @@ select:disabled {
   .fa-counter button:active {
     transform: none;
   }
+}
+
+/* ---------- 다듬기 ---------- */
+
+.fa-tray h2 {
+  font-size: var(--text-md);
+}
+.fa-tray .fa-split {
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+}
+
+/* 빈칸 안내는 서식 이름 아래 한 줄로(오른쪽에 좁게 끼지 않게) */
+.fa-form .fa-badge.warn {
+  grid-column: 2 / -1;
+  justify-self: start;
+  margin-top: calc(var(--space-2xs) * -1);
+  padding: var(--space-3xs) var(--space-xs);
+  border-radius: var(--radius-input);
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: normal;
+}
+.fa-form .fa-badge.muted {
+  grid-column: 3;
+}
+
+/* 끌어다 놓기: 점선 트레이와 올리기 그림 */
+.fa-drop {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  border: 1.5px dashed color-mix(in oklab, var(--color-accent) 45%, var(--color-rule));
+  box-shadow: none;
+  background: color-mix(in oklab, var(--color-paper-2) 70%, transparent);
+}
+.fa-drop-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-input);
+  background: var(--color-surface);
+  color: var(--color-accent-deep);
+  box-shadow: inset 0 1px 0 var(--glint), 0 0 0 1px var(--color-rule), 0 3px 0 var(--color-rule);
+}
+.fa-drop.dragover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+/* 비어 있을 때 */
+.fa-table .fa-empty,
+#formList .fa-empty,
+#agencyChips .fa-empty {
+  padding: var(--space-xl) var(--space-md);
+  border: 1.5px dashed var(--color-rule);
+  border-radius: var(--radius-card);
+  background: color-mix(in oklab, var(--color-surface) 60%, transparent);
+}
+
+/* 표 머리 줄은 가늘게, 줄에 마우스를 올리면 살짝 */
+.fa-table th {
+  border-bottom-color: var(--color-rule);
+}
+@media (hover: hover) {
+  .fa-table tbody tr[data-id]:hover td {
+    background: color-mix(in oklab, var(--color-paper-2) 60%, transparent);
+  }
+}
+
+/* 설정: 저장 줄을 판 아래 오른쪽 끝에 */
+.fa-settings > .fa-head {
+  justify-content: flex-end;
+}
+.fa-settings > .fa-head > #settingsSaved {
+  order: -1;
+  margin-right: auto;
 }

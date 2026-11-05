@@ -122,7 +122,7 @@ async function checkForm(file) {
 
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
-  say('서식 자동 기입 — 한글 연결 점검');
+  say('사회사업실 도우미: 한글 연결 점검');
   say(`시각: ${new Date().toLocaleString('ko-KR')} · Windows: ${process.platform === 'win32' ? '예' : `아니오(${process.platform})`} · Node ${process.version}`);
   say('');
   const probe = await timed('한글 연결', () => runHancom('probe'));

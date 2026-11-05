@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'" />
-<meta name="description" content="환자 인적사항을 한 번 넣고 제출 기관의 한글 서식에 채워 바로 인쇄합니다." />
-<title>서식 자동 기입</title>
+<meta name="description" content="사회사업실 도우미: 환자 인적사항을 한 번 넣고 제출 기관의 한글 서식에 채워 바로 인쇄합니다." />
+<title>사회사업실 도우미</title>
 <link rel="stylesheet" href="app.css" />
 </head>
 <body class="fa">
@@ -12,13 +12,13 @@
 
   <!-- 위: 이름 · 화면 탭 · 개인정보 안내 (화면이 셋뿐이라 옆 메뉴 대신 윗줄) -->
   <header class="fa-bar">
-    <p class="fa-wordmark">서식 자동 기입</p>
+    <p class="fa-wordmark"><span class="fa-mark"><svg class="fa-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4h8l3 3v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"></path><path d="M9 13l2 2 4-4"></path></svg></span>사회사업실 도우미</p>
     <nav class="fa-nav" aria-label="화면">
-      <button type="button" data-screen="screenPrint" aria-current="page">서류 출력</button>
-      <button type="button" data-screen="screenForms">서식 관리</button>
-      <button type="button" data-screen="screenSettings">설정</button>
+      <button type="button" data-screen="screenPrint" aria-current="page"><svg class="fa-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 9V4h10v5"></path><rect x="4" y="9" width="16" height="7" rx="2"></rect><path d="M7 14h10v6H7z"></path></svg>서류 출력</button>
+      <button type="button" data-screen="screenForms"><svg class="fa-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M9 13h6M9 17h4"></path></svg>서식 관리</button>
+      <button type="button" data-screen="screenSettings"><svg class="fa-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"></path><circle cx="16" cy="7" r="2"></circle><circle cx="10" cy="17" r="2"></circle></svg>설정</button>
     </nav>
-    <p class="fa-privacy">인적사항은 저장하지 않고, 출력하면 바로 지웁니다</p>
+    <p class="fa-privacy"><svg class="fa-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 0 1 8 0v3"></path></svg>인적사항은 저장하지 않고, 출력하면 바로 지웁니다</p>
   </header>
 
   <main class="fa-content">
@@ -97,8 +97,11 @@
       <nav class="fa-filter" id="formsSide" aria-label="제출 기관"></nav>
 
       <div class="fa-drop" id="formsDrop">
+        <span class="fa-drop-icon"><svg class="fa-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"></path><path d="M7 9l5-5 5 5"></path><path d="M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"></path></svg></span>
+        <div>
         <p><strong>한글 서식(.hwp, .hwpx)이나 서식이 든 폴더를 여기로 끌어다 놓으세요.</strong></p>
         <p>파일 이름으로 제출 기관, 지원 종류, 세대주와 세대원을 알아보고 서식 안의 메일머지 필드({{이름}} 등)를 찾습니다. 원본 파일은 바뀌지 않습니다.</p>
+        </div>
       </div>
 
       <div class="fa-table-wrap">

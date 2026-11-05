@@ -134,7 +134,7 @@ function buildScript(action, args = {}) {
   } else if (action === 'selftest') {
     body = `${openHwp(false)}  $ins = $hwp.HParameterSet.HInsertText
   [void]$hwp.HAction.GetDefault('InsertText', $ins.HSet)
-  $ins.Text = ${psq(args.text || '서식 자동 기입 — 한글 연결 시험 문서')}
+  $ins.Text = ${psq(args.text || '사회사업실 도우미: 한글 연결 시험 문서')}
   $typed = [bool]$hwp.HAction.Execute('InsertText', $ins.HSet)
   Add-Step 'type' $typed ''
 ${saveAs(args.hwpxOut)}  [void]$hwp.Clear(1)
