@@ -72,8 +72,8 @@ test('주민등록번호 확인·안내, 날짜 읽기', () => {
   assert.strictEqual(mf.checkRrn('900101-1234567'), '');
   assert.ok(mf.checkRrn('9001011').includes('13자리'));
   assert.ok(mf.checkRrn('901301-1234567').includes('생년월일'));
-  assert.strictEqual(mf.rrnSummary('900101-1234567', new Date(2026, 10, 4)), '생년월일 900101 · 남 · 만 36세');
-  assert.strictEqual(mf.rrnSummary('050301-4234567', new Date(2026, 10, 4)), '생년월일 050301 · 여 · 만 21세');
+  assert.strictEqual(mf.rrnSummary('900101-1234567', new Date(2026, 10, 4)), '생년월일 900101, 남, 만 36세');
+  assert.strictEqual(mf.rrnSummary('050301-4234567', new Date(2026, 10, 4)), '생년월일 050301, 여, 만 21세');
   assert.deepStrictEqual(mf.parseDate('2026.7.3'), { y: 2026, m: 7, d: 3 });
   assert.deepStrictEqual(mf.parseDate('26.07.03.'), { y: 2026, m: 7, d: 3 });
   assert.strictEqual(mf.shortDate('아무 글'), '아무 글');
@@ -326,7 +326,7 @@ test('출력 규칙: 출력 전 확인(필수 칸·주민등록번호 모양은 
   assert.deepStrictEqual(plan.checkBeforeOutput([e], { name: 'x', rrn: '123' }, {}), { block: '주민등록번호를 확인하세요: 주민등록번호는 숫자 13자리입니다', focus: 'rrn', missing: [] });
   assert.deepStrictEqual(plan.checkBeforeOutput([e], { name: 'x', rrn: '900101-1234567' }, {}), { block: '', focus: null, missing: ['연락처'] });
   assert.deepStrictEqual(plan.summaryOf([], {}, {}, 1), { title: '출력할 서류를 고르세요', detail: '' });
-  assert.deepStrictEqual(plan.summaryOf([e, e], { name: 'x', rrn: '900101-1234567', phone: '1' }, {}, 2), { title: '서식 2개 · 서류 약 2종 × 2부', detail: '모든 칸이 채워집니다' });
+  assert.deepStrictEqual(plan.summaryOf([e, e], { name: 'x', rrn: '900101-1234567', phone: '1' }, {}, 2), { title: '서식 2개, 서류 약 2종, 2부씩', detail: '모든 칸이 채워집니다' });
   assert.strictEqual(plan.filledFileName(entry('a/b:c')), '양주시청_a_b_c(세대주).hwpx');
   assert.strictEqual(plan.filledFileName(entry('암', { applicant: '공통', agency: '공통 서식' })), '공통 서식_암.hwpx');
 });
