@@ -1148,8 +1148,10 @@ svg.fill,
 
 .wb-line.reason-exact { --line: var(--m-exact); }
 .wb-line.reason-synonym { --line: var(--m-synonym); }
-.wb-line.reason-fuzzy { --line: var(--m-fuzzy); }
-.wb-line.reason-fuzzy .wb-wire svg { stroke-dasharray: 6 6; }
+.wb-line.reason-fuzzy,
+.wb-line.reason-value { --line: var(--m-fuzzy); }
+.wb-line.reason-fuzzy .wb-wire svg,
+.wb-line.reason-value .wb-wire svg { stroke-dasharray: 6 6; }
 .wb-line.reason-none .wb-dot {
   background: #fff;
   border: 2px solid var(--m-error-soft);
@@ -1163,7 +1165,8 @@ svg.fill,
   padding-right: 8px;
 }
 
-.wb-b-card.reason-fuzzy {
+.wb-b-card.reason-fuzzy,
+.wb-b-card.reason-value {
   background: #fffaf0;
   border-color: var(--m-fuzzy-border);
 }
@@ -1228,7 +1231,8 @@ body.wb-dragging * {
 
 .wb-badge.reason-exact { background: var(--m-exact-bg); color: var(--m-exact-text); }
 .wb-badge.reason-synonym { background: var(--m-synonym-bg); color: var(--m-synonym-text); }
-.wb-badge.reason-fuzzy { background: var(--m-fuzzy-bg); color: var(--m-fuzzy-text); }
+.wb-badge.reason-fuzzy,
+.wb-badge.reason-value { background: var(--m-fuzzy-bg); color: var(--m-fuzzy-text); }
 .wb-badge.reason-none { background: var(--m-error-bg); color: var(--m-error); }
 
 .wb-req {
@@ -1732,7 +1736,8 @@ table.wb-grid {
 
 .wb-th-src.reason-exact { background: var(--m-exact-bg); color: var(--m-exact-text); }
 .wb-th-src.reason-synonym { background: var(--m-synonym-bg); color: var(--m-synonym-text); }
-.wb-th-src.reason-fuzzy { background: #fff; color: var(--m-fuzzy-text); }
+.wb-th-src.reason-fuzzy,
+.wb-th-src.reason-value { background: #fff; color: var(--m-fuzzy-text); }
 .wb-th-src.reason-none { background: #fff; color: var(--m-error); }
 
 .wb-grid thead th.status-fuzzy { background: var(--m-fuzzy-bg); }

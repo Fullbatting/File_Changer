@@ -18,6 +18,7 @@ const {
   safeReadFileSync,
   safeWriteFileSync,
   log,
+  needsCheck,
 } = common;
 
 const UI_SETTINGS_FILE_NAME = 'ui-settings.json';
@@ -26,6 +27,7 @@ const REASON_LABELS = {
   exact: '같은 이름',
   synonym: '동의어',
   fuzzy: '비슷한 이름',
+  value: '값 일치',
   confirmed: '확인됨',
   manual: '직접 연결',
   preset: '프리셋',
@@ -82,7 +84,7 @@ function el(tag, props = {}, ...children) {
 }
 
 const icon = (name, className = 'wb-icon') => el('span', { className, html: ICONS[name] });
-const isProblemReason = (reason, mapped) => reason === 'fuzzy' || !mapped;
+const isProblemReason = (reason, mapped) => needsCheck(reason) || !mapped;
 
 function createWorkbench(api) {
   const $ = (id) => document.getElementById(id);
@@ -486,7 +488,7 @@ function createWorkbench(api) {
     const derived = api.getDerived();
     const total = st.headersB.length;
     const connected = st.headersB.filter((b) => st.mapping[b]).length;
-    const fuzzy = st.headersB.filter((b) => st.matchReason[b] === 'fuzzy').length;
+    const fuzzy = st.headersB.filter((b) => needsCheck(st.matchReason[b])).length;
     const none = total - connected;
     const requiredNone = st.headersB.filter((b) => !st.mapping[b] && st.required.has(b)).length;
     return {
@@ -599,7 +601,7 @@ function createWorkbench(api) {
   function groupOf(b) {
     const reason = st.matchReason[b] || 'none';
     if (!st.mapping[b]) return 'none';
-    if (reason === 'fuzzy') return 'fuzzy';
+    if (needsCheck(reason)) return 'fuzzy';
     if (reason === 'exact' || reason === 'synonym') return 'auto';
     return 'manual';
   }
@@ -706,7 +708,7 @@ function createWorkbench(api) {
   }
 
   const GROUP_TITLES = {
-    fuzzy: ['확인 필요', '이름만 비슷해서 연결했습니다'],
+    fuzzy: ['확인 필요', '이름만 비슷하거나 값이 겹쳐서 연결했습니다'],
     none: ['연결 없음', ''],
     manual: ['직접 연결', '직접 고른 연결 · 확인한 연결 · 프리셋/규칙'],
     auto: ['자동 연결됨', ''],
@@ -822,7 +824,7 @@ function createWorkbench(api) {
     );
 
     const actions = [];
-    if (reason === 'fuzzy') {
+    if (needsCheck(reason)) {
       actions.push(el('button', { type: 'button', className: 'wb-btn warn small', dataset: { action: 'confirm' }, text: '맞음' }));
       actions.push(el('button', { type: 'button', className: 'wb-btn small', dataset: { action: 'pick' }, text: '바꾸기' }));
     }
@@ -988,10 +990,10 @@ function createWorkbench(api) {
   }
 
   async function confirmAllFuzzy() {
-    const list = st.headersB.filter((b) => st.matchReason[b] === 'fuzzy');
+    const list = st.headersB.filter((b) => needsCheck(st.matchReason[b]));
     if (list.length === 0) return;
     const ok = await showConfirmDialog({
-      title: `비슷한 이름 연결 ${list.length}개를 모두 맞음으로 할까요?`,
+      title: `확인 필요한 연결 ${list.length}개를 모두 맞음으로 할까요?`,
       message: '아래 연결을 확인한 것으로 표시합니다.',
       items: list.map((b) => `${api.labelOfB(b)} ← ${st.mapping[b]}`),
       note: '실행 취소 한 번으로 모두 되돌릴 수 있습니다.',
@@ -1058,7 +1060,7 @@ function createWorkbench(api) {
   }
 
   function jumpToProblem(kind) {
-    const target = st.headersB.find((b) => (kind === 'fuzzy' ? st.matchReason[b] === 'fuzzy' : !st.mapping[b]));
+    const target = st.headersB.find((b) => (kind === 'fuzzy' ? needsCheck(st.matchReason[b]) : !st.mapping[b]));
     if (!target) return;
     if (ui.view !== 'connect') setView('connect');
     focusRow(target);
@@ -1081,7 +1083,7 @@ function createWorkbench(api) {
       stepRow(e.key === 'ArrowDown' ? 1 : -1);
     } else if (onRow && code === 'KeyY') {
       e.preventDefault();
-      if (st.matchReason[row.dataset.b] === 'fuzzy') runRowAction(row.dataset.b, 'confirm');
+      if (needsCheck(st.matchReason[row.dataset.b])) runRowAction(row.dataset.b, 'confirm');
     } else if (onRow && (code === 'KeyC' || e.key === 'Enter')) {
       e.preventDefault();
       openPicker(row.dataset.b, row.querySelector('.wb-b-card'));
@@ -1348,7 +1350,7 @@ function createWorkbench(api) {
 
   async function choosePicked(b, a) {
     closePicker();
-    if (st.mapping[b] === a && st.matchReason[b] !== 'fuzzy') {
+    if (st.mapping[b] === a && !needsCheck(st.matchReason[b])) {
       focusRow(b);
       return;
     }
@@ -1415,12 +1417,12 @@ function createWorkbench(api) {
         : '';
 
       const reasonCell = el('td', {}, el('span', { className: `wb-badge reason-${reason}`, text: REASON_LABELS[reason] }));
-      if (reason === 'fuzzy') {
+      if (needsCheck(reason)) {
         reasonCell.append(' ', el('button', { type: 'button', className: 'wb-btn warn small', text: '맞음', onclick: () => api.confirmMatch(b) }));
       }
       return el(
           'tr',
-          { className: reason === 'fuzzy' ? 'row-fuzzy' : !a ? 'row-none' : '' },
+          { className: needsCheck(reason) ? 'row-fuzzy' : !a ? 'row-none' : '' },
           el('td', { text: b }),
           reasonCell,
           el('td', {}, select),
@@ -1690,7 +1692,7 @@ function createWorkbench(api) {
           html: ICONS.pin,
         })
       ),
-      el('span', { className: `wb-th-src reason-${reason}`, text: a ? `← ${a}${reason === 'fuzzy' ? ' · 확인 필요' : ''}` : '연결 없음' })
+      el('span', { className: `wb-th-src reason-${reason}`, text: a ? `← ${a}${needsCheck(reason) ? ' · 확인 필요' : ''}` : '연결 없음' })
     );
     ui.preview.thByB.set(b, th);
     return th;
