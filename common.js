@@ -510,7 +510,9 @@ function extractHeaders(filePath, sheetName, options) {
  * ------------------------------------------------------------------------- */
 
 const findAutoMatch = (bCol, headersA, usedHeadersA) => autoMatch.findAutoMatch(bCol, headersA, usedHeadersA, synonymGroups);
-const autoMatchAll = (headersB, headersA) => autoMatch.autoMatchAll(headersB, headersA, synonymGroups);
+// values({ b, a }: 컬럼 키 → 값 배열)를 주면 이름으로 못 정한 컬럼을 타겟 예시 값과 원본 값이 겹치는 정도로 잇는다
+const autoMatchAll = (headersB, headersA, values = null) => autoMatch.autoMatchAll(headersB, headersA, synonymGroups, values);
+const needsCheck = autoMatch.needsCheck;
 
 /* -------------------------------------------------------------------------
  * 원본 컬럼 고르기 도우미 (매핑 작업대의 검색·추천)
@@ -808,6 +810,7 @@ module.exports = {
   decomposeHangulToJamo,
   findAutoMatch,
   autoMatchAll,
+  needsCheck,
   getSynonymGroups: () => synonymGroups,
   getChoseong,
   matchesColumnSearch,

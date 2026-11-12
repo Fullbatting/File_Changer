@@ -32,6 +32,7 @@ const {
   readWorkbookSmart,
   getSynonymGroups,
   autoMatchAll,
+  needsCheck,
   detectValueKind,
   xmlEscape,
   formatPreviewValue,
@@ -58,7 +59,8 @@ let headersA = [];
 let headersB = []; // 컬럼키 (같은 이름이 둘이면 "비고_1"처럼 구분됨)
 let labelsB = []; // 결과 파일 헤더에 쓸 원래 컬럼 이름
 let mapping = {}; // { B키: A키 | '' }
-let matchReason = {}; // { B키: 'exact'|'synonym'|'fuzzy'|'confirmed'|'manual'|'preset'|'rule'|'none' }
+let matchReason = {}; // { B키: 'exact'|'synonym'|'fuzzy'|'value'|'confirmed'|'manual'|'preset'|'rule'|'none' }
+let targetExampleRows = []; // 타겟(B) 양식의 예시 데이터 행(값으로 잇기에만 쓴다)
 let autoCandidates = {}; // { B키: { list: [A키], note } } 자동 매핑이 모호해서 멈춘 후보와 그 이유
 let requiredColumns = new Set(); // 저장 전 검증에서 "필수"로 지정된 B 컬럼
 let overrides = new Map(); // "원본행인덱스|B키" -> 사용자가 미리보기에서 고친 글자
@@ -522,7 +524,7 @@ function getDerived() {
   const columnStatus = {};
   headersB.forEach((b) => {
     if (requiredColumns.has(b) && missingByColumn[b] > 0) columnStatus[b] = 'reqmissing';
-    else if (matchReason[b] === 'fuzzy') columnStatus[b] = 'fuzzy';
+    else if (needsCheck(matchReason[b])) columnStatus[b] = 'fuzzy';
     else if (!mapping[b]) columnStatus[b] = 'none';
     else if (overrideCountByColumn[b]) columnStatus[b] = 'edited';
     else columnStatus[b] = 'ok';
@@ -634,13 +636,13 @@ const api = {
   },
   confirmMatch(b) {
     return commit(`${labelOfB(b)} 연결 확인`, (d) => {
-      if (d.matchReason[b] === 'fuzzy') d.matchReason[b] = 'confirmed';
+      if (needsCheck(d.matchReason[b])) d.matchReason[b] = 'confirmed';
     });
   },
   confirmAllFuzzy(list) {
-    return commit(`비슷한 이름 연결 ${list.length}개 확인`, (d) => {
+    return commit(`확인 필요한 연결 ${list.length}개 확인`, (d) => {
       list.forEach((b) => {
-        if (d.matchReason[b] === 'fuzzy') d.matchReason[b] = 'confirmed';
+        if (needsCheck(d.matchReason[b])) d.matchReason[b] = 'confirmed';
       });
     });
   },
@@ -724,6 +726,7 @@ function resetAnalysisState() {
   headersA = [];
   headersB = [];
   labelsB = [];
+  targetExampleRows = [];
   mapping = {};
   matchReason = {};
   autoCandidates = {};
@@ -808,7 +811,7 @@ function readTableFor(which, options = {}) {
 
 /**
  * ① 인식 결과: 헤더로 고른 행, 건너뛴 위쪽 행, 이름 없는 열, 인코딩, 확장자와 다른 내용을 보여 주고
- * 헤더 행(맨 위 10행 중)과 CSV 인코딩을 직접 고를 수 있게 한다.
+ * 헤더 행(맨 위 행들 중)과 CSV 인코딩을 직접 고를 수 있게 한다.
  */
 function renderRecognition(which) {
   const readRow = document.getElementById(`readRow${which}`);
@@ -1203,15 +1206,21 @@ function prepareSource(table) {
   };
 }
 
+/** 값으로 잇기에 쓸 원본 행 수 상한(큰 원본도 분석이 오래 걸리지 않게) */
+const VALUE_MATCH_SOURCE_ROWS = 20000;
+
 /**
  * 분석 직후 자동 매핑. 타겟 컬럼 순서와 상관없이 같은 이름을 모두 먼저 확정한 뒤 동의어·비슷한 이름을
- * 정한다(common.autoMatchAll). 동의어/비슷한 이름 연결과 모호해서 멈춘 컬럼은 로그로도 알린다.
+ * 정하고(common.autoMatchAll), 그래도 남은 컬럼은 타겟 양식의 예시 값이 원본 컬럼 값과 겹치는 정도로 잇는다.
+ * 동의어/비슷한 이름/값 연결과 모호해서 멈춘 컬럼은 로그로도 알린다.
  */
 function runAutoMapping() {
   mapping = {};
   matchReason = {};
   autoCandidates = {};
-  const results = autoMatchAll(headersB, headersA);
+  const sourceRows = source.rows.length > VALUE_MATCH_SOURCE_ROWS ? source.rows.slice(0, VALUE_MATCH_SOURCE_ROWS) : source.rows;
+  const values = targetExampleRows.length > 0 ? { b: (b) => targetExampleRows.map((r) => r[b]), a: (a) => sourceRows.map((r) => r[a]) } : null;
+  const results = autoMatchAll(headersB, headersA, values);
   headersB.forEach((bCol) => {
     const { match, reason, candidates, note } = results[bCol];
     if (match) {
@@ -1221,6 +1230,9 @@ function runAutoMapping() {
         log(`"${bCol}" 컬럼을 동의어 사전에 따라 "${match}" 컬럼에 자동 매핑했습니다.`);
       } else if (reason === 'fuzzy') {
         log(`"${bCol}" 컬럼을 이름이 비슷한 "${match}" 컬럼에 자동 매핑했습니다. 맞는지 확인하세요.`, 'warn');
+      } else if (reason === 'value') {
+        const { hit, total } = results[bCol].valueHit;
+        log(`"${bCol}" 컬럼을 값이 겹치는 "${match}" 컬럼에 자동 매핑했습니다(타겟 예시 값 ${total}개 중 ${hit}개가 같음). 맞는지 확인하세요.`, 'warn');
       }
     } else {
       mapping[bCol] = '';
@@ -1270,6 +1282,8 @@ document.getElementById('btnAnalyze').addEventListener('click', async () => {
     renderMergeReport();
     headersB = resultB.headers;
     labelsB = resultB.labels;
+    targetExampleRows = resultB.rows;
+    if (targetExampleRows.length > 0) log(`타겟(B) 양식의 예시 데이터 ${targetExampleRows.length}행을 이름으로 못 정한 컬럼을 잇는 데 씁니다.`);
     log(`원본(A) 컬럼 ${headersA.length}개${extraSources.length ? `(추가 원본 ${extraSources.length}개 합침)` : ''}, 타겟(B) 컬럼 ${headersB.length}개 발견`, 'ok');
 
     runAutoMapping();
@@ -1686,10 +1700,10 @@ function showConvertReviewModal(derived, sheets) {
     lines.push(`<div class="review-line ok">완전히 중복된 행이 없습니다.</div>`);
   }
 
-  const fuzzy = headersB.filter((b) => matchReason[b] === 'fuzzy');
+  const fuzzy = headersB.filter((b) => needsCheck(matchReason[b]));
   if (fuzzy.length > 0) {
     const detail = fuzzy.map((b) => `${labelOfB(b)} ← ${mapping[b]}`).join(', ');
-    lines.push(`<div class="review-line warn">확인 안 한 비슷한 이름 연결 ${fuzzy.length}개 (${xmlEscape(detail)})</div>`);
+    lines.push(`<div class="review-line warn">확인 안 한 자동 연결 ${fuzzy.length}개(비슷한 이름·값으로 이음) (${xmlEscape(detail)})</div>`);
   }
   if (overrides.size > 0) {
     lines.push(`<div class="review-line info">직접 고친 값 ${overrides.size}개 포함</div>`);

@@ -129,4 +129,47 @@ function makeWide(dir, { rowCount, sourceCols, targetCols, name }) {
   };
 }
 
-module.exports = { makeSmall, makeMany, makeWide, MANY_TARGET, MANY_SOURCE, serial, sheetFromRows, writeBook, dateCell, moneyCell };
+/* ---------- 양식 구조 인식: 제목·기준일 줄, 합계 행, 표 아래 안내, 이름이 다른 타겟(예시 값으로 잇기) ---------- */
+
+/** 원본(A): 제목(병합) · 기준일 · 헤더 · 5행 · 합계(SUM 수식) · 빈 줄 · ※ 안내 */
+function makeSource(dir) {
+  const people = [
+    ['가나다', '010-1000-0001', dateCell(1990, 1, 2), '상품A', dateCell(2026, 8, 1), 100000, '첫 고객'],
+    ['라마바', '010-1000-0002', dateCell(1985, 5, 5), '상품B', dateCell(2026, 8, 2), 200000, ''],
+    ['사아자', '010-1000-0003', dateCell(1992, 9, 9), '상품A', dateCell(2026, 8, 3), 150000, ''],
+    ['차카타', '010-1000-0004', dateCell(1988, 3, 3), '상품C', dateCell(2026, 8, 4), 300000, ''],
+    ['파하가', '010-1000-0005', dateCell(1995, 12, 12), '상품B', dateCell(2026, 8, 5), 250000, '다섯째'],
+  ].map((r) => r.map((v, i) => (i === 5 ? moneyCell(v) : v)));
+  const ws = sheetFromRows([
+    ['고객 명단'],
+    ['기준일', dateCell(2026, 10, 1)],
+    ['고객명', '연락처', '생년월일', '상품명', '가입일', '납입금액', '비고'],
+    ...people,
+    ['합계', '', '', '', '', { t: 'n', v: 1000000, f: 'SUM(F4:F8)', z: '#,##0' }],
+    [''],
+    ['※ 이 명단은 시험용 가짜 자료입니다.'],
+  ]);
+  ws['!merges'] = [XLSX.utils.decode_range('A1:G1')];
+  return writeBook(path.join(dir, '고객목록(원본).xlsx'), { 고객목록: ws });
+}
+
+/** 타겟(B): 제목 · 작성일/담당자 · 헤더(이름이 다른 컬럼) · 예시 2행(부가세는 수식) · 합계 */
+function makeTarget(dir) {
+  const ws = sheetFromRows([
+    ['2026년 고객 접수 대장'],
+    ['작성일', dateCell(2026, 10, 1), '', '담당자', '시험담당'],
+    ['접수일자', '고객 성명', '연락처', '상품', '금액', '부가세', '지점', '비고'],
+    [dateCell(2026, 8, 1), '가나다', '010-1000-0001', '상품A', moneyCell(100000), { t: 'n', v: 10000, f: 'E4*0.1' }, '본점', '첫 고객'],
+    [dateCell(2026, 8, 2), '라마바', '010-1000-0002', '상품B', moneyCell(200000), { t: 'n', v: 20000, f: 'E5*0.1' }, '본점', ''],
+    ['합계', '', '', '', { t: 'n', v: 300000, f: 'SUM(E4:E5)' }, { t: 'n', v: 30000, f: 'SUM(F4:F5)' }],
+  ]);
+  ws['!merges'] = [XLSX.utils.decode_range('A1:H1')];
+  return writeBook(path.join(dir, '접수대장(양식).xlsx'), { 접수대장: ws });
+}
+
+/** 양식 구조 인식 예제(원본 고객목록 + 타겟 접수대장). 반환: { source, target } 파일 경로 */
+function makeFormStructure(dir) {
+  return { source: makeSource(dir), target: makeTarget(dir) };
+}
+
+module.exports = { makeSmall, makeMany, makeWide, makeFormStructure, MANY_TARGET, MANY_SOURCE, serial, sheetFromRows, writeBook, dateCell, moneyCell };
