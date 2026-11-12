@@ -5,7 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const XLSX = require('xlsx');
-const { makeSmall, makeMany, sheetFromRows, writeBook, serial } = require('./fixtures.js');
+const { makeSmall, makeMany, makeFormStructure, sheetFromRows, writeBook, serial } = require('./fixtures.js');
 
 const OUT = path.join(__dirname, '..', '..', 'samples');
 fs.mkdirSync(OUT, { recursive: true });
@@ -126,6 +126,11 @@ fs.writeFileSync(
 writeBook(path.join(OUT, '06_인식_매출보고_양식(타겟).xlsx'), {
   보고: sheetFromRows([['거래처 매출 보고'], ['거래처코드', '거래처명', '담당자', '매출액', '메모']]),
 });
+
+// 7) 양식 구조 인식: 제목·기준일 아래 헤더, 합계 행(SUM 수식)·표 아래 안내 줄 빼기, 이름이 다른 타겟 컬럼을 예시 값으로 잇기
+const form = makeFormStructure(OUT);
+rename(form.source, '07_양식구조_고객목록(원본).xlsx');
+rename(form.target, '07_양식구조_접수대장_양식(타겟).xlsx');
 
 console.log(`예제 파일을 만들었습니다: ${OUT}`);
 fs.readdirSync(OUT).forEach((f) => console.log(`  ${f}`));

@@ -154,6 +154,120 @@ function findAutoMatch(bCol, headersA, usedHeadersA, synonymGroups = []) {
   return { match: null, reason: null, candidates: syllableTie.length > 0 ? syllableTie : tiedOf(jamo) };
 }
 
+/* ---------- 값으로 연결 ---------- */
+
+/** 값으로 연결할 때: 타겟 예시 값이 서로 다른 것이 이만큼은 있어야 한다(한두 값은 우연히 겹친다) */
+const VALUE_MIN_KEYS = 2;
+/** 타겟 예시 값 가운데 이 비율 이상이 원본 컬럼에 있으면 연결 */
+const VALUE_LINK_RATIO = 0.6;
+/** 1등과 2등의 차이가 이보다 작으면 모호(연결하지 않고 후보로) */
+const VALUE_MARGIN = 0.2;
+/** 후보로 보여 줄 최소 비율 */
+const VALUE_CANDIDATE_RATIO = 0.3;
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const DATE_TEXT = /^(\d{4})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})\s*일?$/;
+
+/**
+ * 값 비교용 열쇠. 표기만 다른 같은 값을 같게 본다: 날짜(Date·"2026.8.1"·"2026년 8월 1일" → 2026-08-01),
+ * 숫자(100000 · "100,000" · 100000.0 → 100000), 글자(전각·공백·대소문자 차이 무시). 빈 값은 null.
+ */
+function valueKey(v) {
+  if (v === '' || v === null || v === undefined) return null;
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return null;
+    const day = `${v.getFullYear()}-${pad2(v.getMonth() + 1)}-${pad2(v.getDate())}`;
+    return v.getHours() || v.getMinutes() ? `${day} ${pad2(v.getHours())}:${pad2(v.getMinutes())}` : day;
+  }
+  if (typeof v === 'number') return Number.isFinite(v) ? String(Number.isInteger(v) ? v : Number(v.toFixed(6))) : null;
+  if (typeof v === 'boolean') return String(v);
+  const text = String(v).normalize('NFKC').trim();
+  if (!text) return null;
+  const date = text.match(DATE_TEXT);
+  if (date) return `${date[1]}-${pad2(date[2])}-${pad2(date[3])}`;
+  if (/^-?[\d,]*\d(\.\d+)?$/.test(text)) {
+    const n = Number(text.replace(/,/g, ''));
+    if (Number.isFinite(n)) return valueKey(n);
+  }
+  return text.replace(/\s+/g, '').toLowerCase();
+}
+
+/** 값 목록의 서로 다른 열쇠 */
+function valueKeySet(values) {
+  const set = new Set();
+  (values || []).forEach((v) => {
+    const k = valueKey(v);
+    if (k !== null) set.add(k);
+  });
+  return set;
+}
+
+/**
+ * 이름으로 연결하지 못한 타겟 컬럼을 값으로 연결한다(타겟 양식에 예시 데이터가 있을 때).
+ * 타겟 예시 값 가운데 원본 컬럼에도 있는 비율로 점수를 매겨, 1등이 VALUE_LINK_RATIO 이상이고 2등보다
+ * VALUE_MARGIN 이상 앞서면 연결한다(reason 'value' — 이름이 비슷한 연결처럼 확인이 필요하다).
+ * 이름 단계에서 후보가 모호했던 컬럼은 그 후보들 안에서만 고른다. 두 타겟이 같은 원본을 원하면
+ * 점수가 더 높은 쪽(동률이면 둘 다 연결하지 않음). result를 고쳐 돌려준다.
+ * values: { b(타겟 키) => 예시 값 배열, a(원본 키) => 값 배열 }
+ */
+function matchByValues(result, headersB, headersA, values) {
+  const usedA = new Set(headersB.map((b) => result[b].match).filter(Boolean));
+  const keysA = new Map();
+  const keysOfA = (a) => {
+    if (!keysA.has(a)) keysA.set(a, valueKeySet(values.a(a)));
+    return keysA.get(a);
+  };
+  const proposals = new Map(); // a -> [{ b, score, hit, total }]
+  headersB.forEach((b) => {
+    if (result[b].match) return;
+    const keysB = valueKeySet(values.b(b));
+    if (keysB.size < VALUE_MIN_KEYS) return;
+    const pool = (result[b].candidates.length > 0 ? result[b].candidates : headersA).filter((a) => !usedA.has(a));
+    const scored = pool
+      .map((a) => {
+        const set = keysOfA(a);
+        let hit = 0;
+        keysB.forEach((k) => {
+          if (set.has(k)) hit += 1;
+        });
+        return { a, hit, total: keysB.size, score: hit / keysB.size };
+      })
+      .filter((x) => x.score > 0)
+      .sort((x, y) => y.score - x.score);
+    if (scored.length === 0) return;
+    const [best, second] = scored;
+    if (best.score >= VALUE_LINK_RATIO && (!second || best.score - second.score >= VALUE_MARGIN)) {
+      if (!proposals.has(best.a)) proposals.set(best.a, []);
+      proposals.get(best.a).push({ b, ...best });
+    } else if (best.score >= VALUE_CANDIDATE_RATIO && result[b].candidates.length === 0) {
+      const close = scored.filter((x) => x.score >= VALUE_CANDIDATE_RATIO && best.score - x.score < VALUE_MARGIN).map((x) => x.a);
+      result[b].candidates = close;
+      result[b].note = close.length > 1 ? `값이 겹치는 후보 ${close.length}개가 비슷한 정도` : `예시 값 ${best.total}개 중 ${best.hit}개만 겹침`;
+    }
+  });
+  proposals.forEach((list, a) => {
+    const sorted = list.slice().sort((x, y) => y.score - x.score);
+    if (sorted.length > 1 && sorted[0].score === sorted[1].score) {
+      sorted.filter((x) => x.score === sorted[0].score).forEach((x) => {
+        result[x.b].candidates = [a];
+        result[x.b].note = '다른 타겟 컬럼도 같은 정도로 이 원본 컬럼과 값이 겹침';
+      });
+      return;
+    }
+    const win = sorted[0];
+    result[win.b] = { match: a, reason: 'value', candidates: [], note: '', valueHit: { hit: win.hit, total: win.total } };
+    usedA.add(a);
+  });
+  headersB.filter((b) => !result[b].match).forEach((b) => {
+    result[b].candidates = result[b].candidates.filter((a) => !usedA.has(a));
+    if (result[b].candidates.length === 0) result[b].note = '';
+  });
+  return result;
+}
+
+/** 확인이 필요한 자동 연결인지(이름만 비슷하거나 값으로 이은 것) */
+const needsCheck = (reason) => reason === 'fuzzy' || reason === 'value';
+
 /**
  * 타겟 컬럼 전체를 한꺼번에 자동 연결한다. 타겟 컬럼 순서와 상관없이 같은 결과가 나오도록
  * 단계마다 "모든 B"를 먼저 본 뒤 확정한다:
@@ -164,10 +278,11 @@ function findAutoMatch(bCol, headersA, usedHeadersA, synonymGroups = []) {
  * 2) 남은 B에 동의어 → 3) 비슷한 이름(음절) → 4) 비슷한 이름(자모)를 차례로.
  *    각 단계는 "B의 가장 가까운 후보가 하나뿐 + 그 A를 원하는 B 중 이 B가 가장 가까움(동률 아님)"인
  *    쌍만 확정하고, 확정으로 후보가 줄어 새로 하나뿐이 된 B를 위해 바뀌지 않을 때까지 되풀이한다.
- * 반환: { [b]: { match, reason, candidates, note } } — candidates는 모호해서 연결하지 않은 후보,
+ * 5) values(타겟 예시 값·원본 값을 돌려주는 함수 { b, a })를 주면 남은 B를 값으로(matchByValues).
+ * 반환: { [b]: { match, reason, candidates, note, valueHit? } } — candidates는 모호해서 연결하지 않은 후보,
  * note는 왜 연결하지 않았는지(화면에서 후보와 함께 보여 준다)
  */
-function autoMatchAll(headersB, headersA, synonymGroups = []) {
+function autoMatchAll(headersB, headersA, synonymGroups = [], values = null) {
   const result = {};
   headersB.forEach((b) => {
     result[b] = { match: null, reason: null, candidates: [], note: '' };
@@ -252,7 +367,7 @@ function autoMatchAll(headersB, headersA, synonymGroups = []) {
     result[b].candidates = result[b].candidates.filter((a) => !usedA.has(a));
     if (result[b].candidates.length === 0) result[b].note = '';
   });
-  return result;
+  return values ? matchByValues(result, headersB, headersA, values) : result;
 }
 
 module.exports = {
@@ -264,4 +379,7 @@ module.exports = {
   getChoseong,
   findAutoMatch,
   autoMatchAll,
+  valueKey,
+  matchByValues,
+  needsCheck,
 };

@@ -91,7 +91,7 @@ test('헤더 행 직접 고르기: 자동과 다른 행을 쓰고 report에 표�
   assert.strictEqual(bad.headerRowIndex, 1);
 });
 
-test('헤더 후보 목록: 맨 위 10행, 미리보기 글자와 헤더로 보이는지', () => {
+test('헤더 후보 목록: 맨 위 행들, 미리보기 글자와 헤더로 보이는지', () => {
   const r = t.buildTableFromSheet(sheet([['명단'], ['이름', '부서'], ['홍길동', '영업']]), 'S');
   const c = r.report.headerCandidates;
   assert.deepStrictEqual(c.map((x) => x.rowNumber), [1, 2, 3]);
@@ -136,6 +136,72 @@ test('dense 모드(행 배열)로 읽은 시트도 같은 표: 제목 행·B2 �
   assert.deepStrictEqual(dense.rowNumbers, [4, 5]);
   assert.deepStrictEqual(dense.numberFormats, { 급여: '#,##0' });
   assert.strictEqual(t.cellAt(denseSheet, 2, 1).v, '이름');
+});
+
+test('헤더 판정: 제목·작성 정보·결재란이 길게 붙어 15행에 있는 헤더도 찾는다', () => {
+  const top = [['2026년 고객 접수 대장']];
+  for (let i = 0; i < 12; i++) top.push([`안내 ${i + 1}`]);
+  top.push(['']);
+  const r = t.buildTableFromSheet(sheet([...top, ['접수일자', '성명', '연락처', '금액'], ['2026-08-01', '홍길동', '010-1111-2222', 100000]]), 'S');
+  assert.strictEqual(r.report.headerRowNumber, 15);
+  assert.deepStrictEqual(r.headers, ['접수일자', '성명', '연락처', '금액']);
+});
+
+test('헤더 판정: 표 오른쪽 위 결재란(담당·팀장·부장)은 아래 데이터와 열이 맞지 않아 헤더가 아니다', () => {
+  const grid = [
+    ['', '', '', '담당', '팀장', '부장'],
+    ['', '', '', '', '', ''],
+    ['번호', '성명', '부서', '직급', '입사일', '비고'],
+    [1, '홍길동', '영업', '대리', '2020-01-02', ''],
+    [2, '김영희', '개발', '과장', '2019-03-04', '파견'],
+  ];
+  const r = t.buildTableFromSheet(sheet(grid), 'S');
+  assert.strictEqual(r.report.headerRowNumber, 3);
+  const approval = r.report.headerCandidates.find((c) => c.rowNumber === 1);
+  assert.strictEqual(approval.likely, false);
+  assert.strictEqual(approval.aligned, false);
+});
+
+test('합계·소계 행: 중간 소계와 맨 끝 합계를 빼고 행 번호와 함께 알린다(이름에 "합계"가 든 값은 그대로)', () => {
+  const r = t.buildTableFromSheet(sheet([
+    ['상품', '지점', '금액'],
+    ['합계보험', '서울', 100],
+    ['연금', '서울', 200],
+    ['소계', '', 300],
+    ['연금', '부산', 50],
+    ['총 계', '', 350],
+  ]), 'S');
+  assert.deepStrictEqual(r.rows.map((x) => x['상품']), ['합계보험', '연금', '연금']);
+  assert.deepStrictEqual(r.rowNumbers, [2, 3, 5]);
+  assert.deepStrictEqual(r.report.summaryRows.map((x) => x.rowNumber), [4, 6]);
+  assert.strictEqual(r.report.dataRowCount, 3);
+  const line = t.describeRecognition(r.report).find((i) => i.text.startsWith('합계·소계 행'));
+  assert.ok(line && line.warn && line.text.includes('4행') && line.text.includes('6행'), line && line.text);
+});
+
+test('합계 행: 이름 없이 위쪽 행을 더하는 수식(SUM)만 있는 행도 뺀다. 데이터 행의 계산 수식은 그대로', () => {
+  const ws = sheet([['성명', '금액', '부가세'], ['홍길동', 100, 10], ['김영희', 200, 20], ['', 300, 30]]);
+  ws.C2.f = 'B2*0.1';
+  ws.C3.f = 'B3*0.1';
+  ws.B4.f = 'SUM(B2:B3)';
+  ws.C4.f = 'SUM(C2:C3)';
+  const r = t.buildTableFromSheet(ws, 'S');
+  assert.deepStrictEqual(r.rows.map((x) => x['성명']), ['홍길동', '김영희']);
+  assert.deepStrictEqual(r.report.summaryRows.map((x) => x.rowNumber), [4]);
+});
+
+test('표 아래 설명 줄: 끝에 있는 ※ 안내·빈 줄 뒤 긴 문장은 빼고, 끝의 짧은 데이터 행은 그대로', () => {
+  const r = t.buildTableFromSheet(sheet([
+    ['성명', '연락처', '주소'],
+    ['홍길동', '010', '서울'],
+    ['김영희', '', ''],
+    ['', '', ''],
+    ['위 명단은 2026년 10월 1일 기준으로 작성되었습니다.', '', ''],
+    ['※ 개인정보는 업무 외에 쓰지 않습니다.', '', ''],
+  ]), 'S');
+  assert.deepStrictEqual(r.rows.map((x) => x['성명']), ['홍길동', '김영희']);
+  assert.deepStrictEqual(r.report.footerRows.map((x) => x.rowNumber), [5, 6]);
+  assert.ok(t.describeRecognition(r.report, {}, { includeRows: false }).some((i) => i.text.startsWith('표 아래 설명 줄 2개는 예시 값에서 뺌')));
 });
 
 test('1900 날짜 체계: 날짜와 날짜+시각', () => {

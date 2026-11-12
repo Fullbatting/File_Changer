@@ -6,8 +6,12 @@
 const XLSX = require('xlsx');
 const iconv = require('iconv-lite');
 
-/** 헤더 후보로 살펴볼 시트 맨 위 행 수 */
-const HEADER_SCAN_ROWS = 10;
+/** 헤더 후보로 살펴볼 시트 맨 위 행 수(제목·작성일·결재란이 길게 붙은 양식도 찾도록 넉넉히) */
+const HEADER_SCAN_ROWS = 30;
+/** 헤더 후보의 열이 아래 데이터와 맞는지 볼 때 살펴볼 아래 행 수 */
+const ALIGN_SCAN_ROWS = 10;
+/** 아래 데이터 칸 가운데 헤더 칸이 빈 열에 있는 비율이 이보다 크면 헤더가 아니다(결재란·작성자 줄 등) */
+const MAX_OUTSIDE_RATIO = 0.4;
 
 /* ---------- 파일 내용 확인 ---------- */
 
@@ -263,14 +267,40 @@ function previewRow(row, maxLength = 48) {
 }
 
 /**
- * 시트 맨 위 행들을 헤더 후보로 평가한다. 행마다 { index, filled, textRatio, likely, preview }.
+ * 헤더 후보 행의 열이 아래 데이터와 맞는 정도: 아래 행들(최대 ALIGN_SCAN_ROWS개)의 채워진 칸 가운데
+ * 헤더 칸이 빈 열(가로 병합으로 덮인 열은 채워진 것으로 본다)에 있는 비율. 아래에 데이터가 없으면 0.
+ * 표 위 오른쪽에 붙은 결재란(담당 | 팀장 | 부장)은 표의 열 대부분을 덮지 못하므로 이 비율이 크다.
+ */
+function outsideRatio(grid, index, coveredCols) {
+  const header = grid[index];
+  const covered = coveredCols && coveredCols.get(index);
+  let filled = 0;
+  let outside = 0;
+  let rows = 0;
+  for (let r = index + 1; r < grid.length && rows < ALIGN_SCAN_ROWS; r++) {
+    let any = false;
+    grid[r].forEach((v, c) => {
+      if (isBlank(v)) return;
+      any = true;
+      filled += 1;
+      if (isBlank(header[c]) && !(covered && covered.has(c))) outside += 1;
+    });
+    if (any) rows += 1;
+  }
+  return filled ? outside / filled : 0;
+}
+
+/**
+ * 시트 맨 위 행들을 헤더 후보로 평가한다. 행마다 { index, filled, textRatio, aligned, likely, preview }.
  * likely(헤더로 보임) 조건 — 모두 만족해야 한다:
  * - 채워진 칸이 위쪽 행들 중 가장 많이 채워진 행의 절반 이상(2칸 이상). 제목 한 줄·작성자 줄을 거른다.
  * - 채워진 칸의 80% 이상이 컬럼 이름 같은 글자(숫자·날짜·전화번호가 아님). 값이 든 데이터 행을 거른다.
  * - 같은 글자가 거의 반복되지 않음(헤더 이름은 대개 서로 다르다).
+ * - 열이 아래 데이터와 맞음(aligned): 아래 데이터 칸이 대부분 이 행의 머리글 칸 아래에 있다. 결재란을 거른다.
  * 데이터 행이 헤더보다 칸이 더 많이 채워져 있어도(머리글 칸 하나가 비어 있을 때) 헤더가 뽑힌다.
+ * coveredCols: 행 → 가로 병합으로 덮인 열 번호들(buildTableFromSheet가 시트의 병합 정보로 만든다)
  */
-function headerRowCandidates(grid, scanLimit = HEADER_SCAN_ROWS) {
+function headerRowCandidates(grid, scanLimit = HEADER_SCAN_ROWS, coveredCols = null) {
   const n = Math.min(scanLimit, grid.length);
   const profiles = [];
   let maxFilled = 0;
@@ -292,13 +322,18 @@ function headerRowCandidates(grid, scanLimit = HEADER_SCAN_ROWS) {
     maxFilled = Math.max(maxFilled, filled);
   }
   const need = maxFilled <= 1 ? 1 : Math.max(2, Math.ceil(maxFilled * 0.5));
-  return profiles.map((p, index) => ({
-    index,
-    filled: p.filled,
-    textRatio: p.filled ? p.text / p.filled : 0,
-    likely: p.filled >= need && p.text / p.filled >= 0.8 && p.repeated <= p.filled * 0.2,
-    preview: previewRow(grid[index]),
-  }));
+  return profiles.map((p, index) => {
+    const textLike = p.filled >= need && p.text / p.filled >= 0.8 && p.repeated <= p.filled * 0.2;
+    const aligned = !textLike || outsideRatio(grid, index, coveredCols) <= MAX_OUTSIDE_RATIO;
+    return {
+      index,
+      filled: p.filled,
+      textRatio: p.filled ? p.text / p.filled : 0,
+      aligned,
+      likely: textLike && aligned,
+      preview: previewRow(grid[index]),
+    };
+  });
 }
 
 /** 예전 방식 점수(헤더로 보이는 행이 없을 때만 쓴다): 채워진 칸이 많을수록, 제목 한 칸짜리는 0 */
@@ -311,15 +346,15 @@ function legacyHeaderScore(row) {
 }
 
 /**
- * 시트 맨 위 최대 10행에서 헤더 행(0부터)을 고른다. 헤더로 보이는 행 중 가장 위의 것.
+ * 시트 맨 위 최대 HEADER_SCAN_ROWS행에서 헤더 행(0부터)을 고른다. 헤더로 보이는 행 중 가장 위의 것.
  * 다만 두 줄 머리글(위: "인적사항 | 연락처" 묶음, 아래: "이름 | 전화번호 | 이메일")이면 아래 줄을 고른다 —
  * 바로 아래 행도 헤더로 보이고 더 많이 채워져 있으면서, 세로 병합으로 같은 칸에 같은 이름이 있거나
  * 그 아래 행은 헤더처럼 보이지 않을 때(데이터가 시작됨). 글자로만 된 데이터 행을 헤더로 잘못 내리지 않도록
  * 아래 행들도 모두 글자뿐이면 위 줄에 머문다(직접 고를 수 있다).
  * 헤더로 보이는 행이 없으면(숫자로 된 컬럼 이름 등) 예전 방식대로 가장 많이 채워진 행.
  */
-function detectHeaderRowIndex(grid) {
-  const candidates = headerRowCandidates(grid);
+function detectHeaderRowIndex(grid, coveredCols = null) {
+  const candidates = headerRowCandidates(grid, HEADER_SCAN_ROWS, coveredCols);
   let idx = candidates.findIndex((c) => c.likely);
   if (idx >= 0) {
     while (idx + 1 < candidates.length) {
@@ -348,6 +383,59 @@ function detectHeaderRowIndex(grid) {
 
 /* ---------- 표 ---------- */
 
+/** 가로 병합으로 덮인 칸: 행(grid 기준) → 열 번호(grid 기준)들. 첫 칸도 넣는다 */
+function horizontalMergeCover(sheet, start) {
+  const cover = new Map();
+  (sheet['!merges'] || []).forEach(({ s, e }) => {
+    if (e.c <= s.c) return;
+    for (let r = s.r; r <= e.r; r++) {
+      const key = r - start.r;
+      if (!cover.has(key)) cover.set(key, new Set());
+      for (let c = s.c; c <= e.c; c++) cover.get(key).add(c - start.c);
+    }
+  });
+  return cover;
+}
+
+/** 합계 줄 이름: "합계", "총 계", "소계(1월)", "계", "Total" 등(공백을 뺀 첫 글자 칸 전체가 이것) */
+const SUMMARY_LABEL = /^(합계|총계|소계|누계|총합계?|계|total|subtotal|grandtotal)([:：(（[].*)?$/i;
+/** 집계 수식(SheetJS는 맨 앞 '='를 빼고 둔다) */
+const AGGREGATE_FORMULA = /^\s*(SUM|SUBTOTAL|AVERAGE|COUNT|COUNTA)\s*\(/i;
+const CELL_ROW_REF = /\$?[A-Z]{1,3}\$?(\d+)/g;
+
+/**
+ * 합계·소계 행인지. values: 그 행의 컬럼별 값, formulas: 컬럼별 수식(없으면 '') 배열 또는 그것을 돌려주는 함수
+ * (칸이 덜 채워진 행에서만 부른다 — 큰 표에서 칸마다 수식을 찾지 않도록), rowNumber: 시트 행 번호(1부터).
+ * - 첫 글자 칸이 합계 줄 이름이고 글자 칸이 3개 이하(나머지는 숫자)
+ * - 또는 위쪽 행만 가리키는 집계 수식(SUM 등)이 있고, 칸이 다 채워지지 않은 행(데이터 행의 계산 열과 구별)
+ */
+function isSummaryRow(values, formulas, rowNumber) {
+  const texts = values.filter((v) => typeof v === 'string' && v.trim() !== '' && !VALUE_LIKE_TEXT.test(v.trim()));
+  if (texts.length > 0 && texts.length <= 3 && SUMMARY_LABEL.test(texts[0].replace(/\s+/g, ''))) return true;
+  const filled = values.filter((v) => !isBlank(v)).length;
+  const sparse = filled <= Math.max(2, Math.floor(values.length * 0.7));
+  if (!sparse) return false;
+  return (typeof formulas === 'function' ? formulas() : formulas).some((f) => {
+    if (!f || !AGGREGATE_FORMULA.test(f)) return false;
+    const refs = [...f.matchAll(CELL_ROW_REF)].map((m) => Number(m[1]));
+    return refs.length > 0 && Math.max(...refs) < rowNumber;
+  });
+}
+
+/** 표 아래 설명 줄 표시: ※ 안내, 작성자·확인자, "위와 같이" 등 */
+const NOTE_MARK = /^(※|\*|▶|■|□|●|○|◎|☞|주\)|주:|참고|비고\s*[:：]|작성자|확인자|담당자\s*[:：]|위와\s*같이|위\s*내용|출처|단위\s*[:：])/;
+
+/**
+ * 표 맨 끝의 설명 줄인지(데이터가 아닌 안내 문장). 칸이 2개 이하이고 첫 칸이 글자이면서
+ * 설명 표시(※ 등)로 시작하거나, 빈 행·합계 행 다음에 오는 긴 문장(15자 이상).
+ */
+function isNoteRow(values, gapBefore) {
+  const filled = values.filter((v) => !isBlank(v));
+  if (filled.length === 0 || filled.length > 2 || typeof filled[0] !== 'string') return false;
+  const text = filled[0].trim();
+  return NOTE_MARK.test(text) || (gapBefore && text.length >= 15);
+}
+
 /**
  * 시트 하나를 표로 읽는다. 헤더와 데이터를 같은 2차원 배열(sheetToGrid)에서 열 번호로 짝지으므로,
  * 헤더 칸의 앞뒤 공백("이름 ")이나 같은 이름의 컬럼이 둘 있어도 값이 엉뚱한 컬럼으로 가지 않는다.
@@ -365,8 +453,9 @@ function buildTableFromSheet(sheet, sheetName, { displayText = false, date1904 =
   if (grid.length === 0) throw new Error(`"${sheetName}" 시트에 데이터가 비어 있습니다.`);
   const start = XLSX.utils.decode_range(sheet['!ref']).s;
 
-  const candidates = headerRowCandidates(grid);
-  const autoIndex = detectHeaderRowIndex(grid);
+  const coveredCols = horizontalMergeCover(sheet, start);
+  const candidates = headerRowCandidates(grid, HEADER_SCAN_ROWS, coveredCols);
+  const autoIndex = detectHeaderRowIndex(grid, coveredCols);
   const manual = Number.isInteger(chosen) && chosen >= 0 && chosen < grid.length;
   const headerRowIndex = manual ? chosen : autoIndex;
   const headerRow = grid[headerRowIndex];
@@ -410,9 +499,11 @@ function buildTableFromSheet(sheet, sheetName, { displayText = false, date1904 =
   });
   if (columns.length === 0) throw new Error(`"${sheetName}" 시트에서 헤더(컬럼명) 행을 찾을 수 없습니다.`);
 
-  const rows = [];
-  const rowNumbers = [];
+  // 데이터 행. 합계·소계 행은 어디에 있든 빼고, 표 아래 설명 줄(※ 안내, 작성자 등)은 맨 끝에 있을 때만 뺀다
+  const kept = []; // { obj, rowNumber, gapBefore, i }
+  const summaryRows = [];
   let emptyRowsRemoved = 0;
+  let gapBefore = false;
   for (let i = headerRowIndex + 1; i < grid.length; i++) {
     const r = grid[i];
     const obj = {};
@@ -424,11 +515,33 @@ function buildTableFromSheet(sheet, sheetName, { displayText = false, date1904 =
     });
     if (!any) {
       emptyRowsRemoved += 1;
+      gapBefore = true;
       continue;
     }
-    rows.push(obj);
-    rowNumbers.push(start.r + i + 1);
+    const rowNumber = start.r + i + 1;
+    const values = columns.map(({ index }) => r[index]);
+    const formulas = () =>
+      columns.map(({ index }) => {
+        const cell = cellAt(sheet, start.r + i, start.c + index);
+        return cell && typeof cell.f === 'string' ? cell.f : '';
+      });
+    if (isSummaryRow(values, formulas, rowNumber)) {
+      summaryRows.push({ rowNumber, preview: previewRow(r) });
+      gapBefore = true;
+      continue;
+    }
+    kept.push({ obj, rowNumber, gapBefore, i });
+    gapBefore = false;
   }
+  const footerRows = [];
+  while (kept.length > 0) {
+    const last = kept[kept.length - 1];
+    if (!isNoteRow(columns.map(({ index }) => grid[last.i][index]), last.gapBefore)) break;
+    footerRows.unshift({ rowNumber: last.rowNumber, preview: previewRow(grid[last.i]) });
+    kept.pop();
+  }
+  const rows = kept.map((k) => k.obj);
+  const rowNumbers = kept.map((k) => k.rowNumber);
 
   // 컬럼별 원본 숫자 표시 형식(%, 통화, 천 단위 등). 변환 결과 엑셀에서 0.15가 "15%"로 보이도록 넘겨준다.
   const numberFormats = {};
@@ -460,6 +573,8 @@ function buildTableFromSheet(sheet, sheetName, { displayText = false, date1904 =
     unnamedColumns,
     mergedHeaderColumns,
     droppedEmptyColumns,
+    summaryRows,
+    footerRows,
     date1904,
     dataRowCount: rows.length,
   };
@@ -493,6 +608,14 @@ function describeRecognition(report, fileInfo = {}, { includeRows = true } = {})
   if (report.unnamedColumns.length > 0) {
     items.push({ text: `머리글이 빈 열 ${report.unnamedColumns.length}개를 ${report.unnamedColumns.join(', ')}(으)로 넣음(값이 있어 버리지 않음)`, warn: true });
   }
+  const listRows = (rows) => rows.slice(0, 3).map((r) => `${r.rowNumber}행 "${r.preview}"`).join(', ') + (rows.length > 3 ? ' …' : '');
+  const leftOut = includeRows ? '데이터에서 뺌' : '예시 값에서 뺌';
+  if (report.summaryRows && report.summaryRows.length > 0) {
+    items.push({ text: `합계·소계 행 ${report.summaryRows.length}개는 ${leftOut}: ${listRows(report.summaryRows)}`, warn: true });
+  }
+  if (report.footerRows && report.footerRows.length > 0) {
+    items.push({ text: `표 아래 설명 줄 ${report.footerRows.length}개는 ${leftOut}: ${listRows(report.footerRows)}`, warn: true });
+  }
   if (report.mergedHeaderColumns.length > 0) {
     items.push({ text: `병합된 머리글을 이어 받은 열: ${report.mergedHeaderColumns.join(', ')}`, warn: false });
   }
@@ -519,6 +642,8 @@ module.exports = {
   formatPreviewValue,
   sheetToGrid,
   isHeaderLikeText,
+  isSummaryRow,
+  isNoteRow,
   headerRowCandidates,
   detectHeaderRowIndex,
   buildTableFromSheet,
